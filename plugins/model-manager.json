@@ -1,0 +1,46 @@
+{
+  "id": "model-manager",
+  "name": "模型管理",
+  "icon": "package",
+  "category": "预测",
+  "description": "模型库管理：①把连入的模型（JSON）保存到模型库目录；②读取库中已有模型，勾选多选后把选中的模型输出给下游（如指标面板）。",
+  "version": "1.0.0",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "2026-08-29 用户定制：模型存储 + 多选输出"
+  ],
+  "params": [
+    {
+      "key": "folder",
+      "label": "模型库目录",
+      "kind": "folder",
+      "default": "",
+      "hint": "模型保存与读取都发生在这个目录；选择后下方会自动列出库中的 .json 模型"
+    },
+    {
+      "key": "models",
+      "label": "选择要输出的模型",
+      "kind": "models",
+      "default": [],
+      "hint": "从模型库勾选要输出到下游的模型（可多选）；保存模型后重新打开即可看到新模型"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "model",
+      "type": "JSON",
+      "direction": "in",
+      "required": false,
+      "multiple": true
+    }
+  ],
+  "outputs": [
+    {
+      "name": "selected",
+      "type": "JSON",
+      "direction": "out"
+    }
+  ],
+  "code": "# 模型管理：保存连入的模型到模型库；按多选输出库中模型\nimport os\nimport datetime\nimport json as _json\n\nmodel_dir = {{folder}}\nselected_models = {{models}}\n\n\ndef _items(value):\n    if value is None:\n        return []\n    if isinstance(value, (list, tuple)):\n        return [item for item in value if item is not None]\n    return [value]\n\n\nif not model_dir or not os.path.isdir(model_dir):\n    raise RuntimeError('请先选择有效的模型库目录')\n\ntry:\n    _model_value = model\nexcept NameError:\n    _model_value = None\n\n# ── 1. 保存连入的模型 ────────────────────────\n_saved_names = []\nfor _index, _item in enumerate(_items(_model_value), start=1):\n    if not isinstance(_item, dict):\n        raise RuntimeError('第 ' + str(_index) + ' 个模型必须是 JSON 对象（dict）')\n    _type = str(_item.get('type', 'model'))\n    _target = str(_item.get('target', 'unknown'))\n    _base = _type + '_' + _target\n    _candidate = os.path.join(model_dir, _base + '.json')\n    _number = 1\n    while os.path.exists(_candidate):\n        _candidate = os.path.join(model_dir, _base + ' (' + str(_number) + ').json')\n        _number += 1\n    with open(_candidate, 'w', encoding='utf-8') as _file:\n        _json.dump(_item, _file, ensure_ascii=False, indent=2)\n    _saved_names.append(os.path.basename(_candidate))\n\n# ── 2. 读取模型库（含刚保存的） ──────────────\n_available = {}\nfor _name in sorted(os.listdir(model_dir)):\n    if not _name.lower().endswith('.json'):\n        continue\n    _key = _name[:-5]  # 去掉 .json 扩展名\n    try:\n        with open(os.path.join(model_dir, _name), encoding='utf-8') as _file:\n            _available[_key] = _json.load(_file)\n    except Exception:\n        continue  # 不是合法 JSON 的跳过\n\n# ── 3. 按多选输出选中模型 ────────────────────\n_result = []\nif isinstance(selected_models, (list, tuple)) and len(selected_models) > 0:\n    _missing = [key for key in selected_models if key not in _available]\n    if _missing:\n        raise RuntimeError('模型库中找不到：' + '、'.join(_missing))\n    _result = [_available[key] for key in selected_models]\n\n_log = []\nif _saved_names:\n    _log.append('已保存 ' + str(len(_saved_names)) + ' 个模型：' + '、'.join(_saved_names))\n_log.append('模型库共 ' + str(len(_available)) + ' 个模型，本次输出 ' + str(len(_result)) + ' 个')\nprint('\\n'.join(_log))\n\nreturn _result",
+  "source": "user-created"
+}

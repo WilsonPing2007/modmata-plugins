@@ -1,0 +1,83 @@
+{
+  "id": "linear-regression",
+  "name": "线性回归",
+  "icon": "chart-line",
+  "category": "预测",
+  "description": "从 CSV 中选择多个特征列和一个目标列，训练普通最小二乘线性回归；输出逐行预测结果、模型评价指标和可读的回归方程。可选连接一份新数据进行预测。",
+  "version": "1.0.0",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "训练与预测一体；输出 prediction、metrics、model 三路结果"
+  ],
+  "params": [
+    {
+      "key": "features",
+      "label": "特征列 X（多选）",
+      "kind": "columns",
+      "default": [],
+      "hint": "选择用于预测的一个或多个数值列"
+    },
+    {
+      "key": "target",
+      "label": "目标列 y",
+      "kind": "column",
+      "default": null,
+      "hint": "选择需要预测的数值列"
+    },
+    {
+      "key": "fit_intercept",
+      "label": "添加截距项",
+      "kind": "boolean",
+      "default": true,
+      "hint": "通常保持开启，即拟合 β₀"
+    },
+    {
+      "key": "test_size",
+      "label": "测试集比例",
+      "kind": "float",
+      "default": 0.2,
+      "hint": "取值 0.05–0.5，用于计算泛化评价指标"
+    },
+    {
+      "key": "random_state",
+      "label": "随机种子",
+      "kind": "int",
+      "default": 42,
+      "hint": "相同种子可复现相同的数据划分",
+      "advanced": true
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "in",
+      "required": true
+    },
+    {
+      "name": "predict_data",
+      "type": "CSV",
+      "direction": "in",
+      "required": false
+    }
+  ],
+  "outputs": [
+    {
+      "name": "prediction",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "metrics",
+      "type": "JSON",
+      "direction": "out"
+    },
+    {
+      "name": "model",
+      "type": "JSON",
+      "direction": "out"
+    }
+  ],
+  "code": "# 线性回归：训练、评价，并可选预测新数据\nimport io\nimport math\nimport pandas as pd\nfrom sklearn.linear_model import LinearRegression\nfrom sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score\nfrom sklearn.model_selection import train_test_split\n\n_features = {{features}}\n_target = {{target}}\n_fit_intercept = {{fit_intercept}}\n_test_size = float({{test_size}})\n_random_state = int({{random_state}})\n\ndef _to_frame(value, label):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        text = None\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                text = value.decode(encoding)\n                break\n            except UnicodeDecodeError:\n                continue\n        if text is None:\n            raise RuntimeError(label + ' 的 CSV 编码无法识别')\n        return pd.read_csv(io.StringIO(text))\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError(label + ' 必须是 CSV 文本或 DataFrame')\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif not isinstance(_features, (list, tuple)) or len(_features) == 0:\n    raise RuntimeError('请至少选择一个特征列 X')\nif not _target:\n    raise RuntimeError('请选择目标列 y')\nif _target in _features:\n    raise RuntimeError('目标列不能同时作为特征列')\nif not 0.05 <= _test_size <= 0.5:\n    raise RuntimeError('测试集比例必须在 0.05–0.5 之间')\n\n_df = _to_frame(data, '训练数据')\n_required = list(_features) + [_target]\n_missing_columns = [str(column) for column in _required if column not in _df.columns]\nif _missing_columns:\n    raise RuntimeError('训练数据中找不到这些列：' + '、'.join(_missing_columns))\n\n_numeric = _df[_required].apply(pd.to_numeric, errors='coerce')\n_invalid_columns = []\nfor column in _required:\n    invalid = _df[column].notna() & _numeric[column].isna()\n    if bool(invalid.any()):\n        _invalid_columns.append(str(column))\nif _invalid_columns:\n    raise RuntimeError('这些列包含非数值内容：' + '、'.join(_invalid_columns))\n\n_valid = _numeric.notna().all(axis=1)\n_clean = _df.loc[_valid].copy()\n_clean[_required] = _numeric.loc[_valid]\n\n_minimum = max(5, len(_features) + 3)\nif len(_clean) < _minimum:\n    raise RuntimeError('有效样本过少：至少需要 ' + str(_minimum) + ' 行，当前只有 ' + str(len(_clean)) + ' 行')\n\n_X = _clean[list(_features)]\n_y = _clean[_target]\n_X_train, _X_test, _y_train, _y_test = train_test_split(\n    _X, _y, test_size=_test_size, random_state=_random_state\n)\n_model = LinearRegression(fit_intercept=_fit_intercept)\n_model.fit(_X_train, _y_train)\n_train_prediction = _model.predict(_X_train)\n_test_prediction = _model.predict(_X_test)\n\n_train_result = _clean.loc[_X_train.index].copy()\n_train_result['实际值'] = _y_train\n_train_result['预测值'] = _train_prediction\n_train_result['残差'] = _y_train.to_numpy() - _train_prediction\n_train_result['绝对误差'] = abs(_train_result['残差'])\n_train_result['数据集'] = 'train'\n\n_test_result = _clean.loc[_X_test.index].copy()\n_test_result['实际值'] = _y_test\n_test_result['预测值'] = _test_prediction\n_test_result['残差'] = _y_test.to_numpy() - _test_prediction\n_test_result['绝对误差'] = abs(_test_result['残差'])\n_test_result['数据集'] = 'test'\nprediction = pd.concat([_train_result, _test_result]).sort_index().reset_index(drop=True)\n\n_new_data = globals().get('predict_data', None)\nif _new_data is not None:\n    _new = _to_frame(_new_data, '待预测数据')\n    _new_missing = [str(column) for column in _features if column not in _new.columns]\n    if _new_missing:\n        raise RuntimeError('待预测数据中找不到这些特征列：' + '、'.join(_new_missing))\n    _new_x = _new[list(_features)].apply(pd.to_numeric, errors='coerce')\n    if _new_x.isna().any().any():\n        raise RuntimeError('待预测数据的特征列存在缺失值或非数值内容')\n    prediction = _new.copy()\n    prediction['预测值'] = _model.predict(_new_x)\n    prediction['数据集'] = 'predict'\n\n_r2 = float(r2_score(_y_test, _test_prediction))\n_mse = float(mean_squared_error(_y_test, _test_prediction))\n_rmse = math.sqrt(_mse)\n_n_test = len(_y_test)\n_p = len(_features)\n_adjusted_r2 = None if _n_test <= _p + 1 else float(1 - (1 - _r2) * (_n_test - 1) / (_n_test - _p - 1))\nmetrics = {\n    'r2': _r2,\n    'adjusted_r2': _adjusted_r2,\n    'mae': float(mean_absolute_error(_y_test, _test_prediction)),\n    'mse': _mse,\n    'rmse': _rmse,\n    'sample_count': int(len(_clean)),\n    'train_count': int(len(_y_train)),\n    'test_count': int(len(_y_test)),\n    'feature_count': int(len(_features))\n}\n\n_coefficients = {str(name): float(value) for name, value in zip(_features, _model.coef_)}\n_intercept = float(_model.intercept_) if _fit_intercept else 0.0\n_terms = [str(_target) + ' = ' + format(_intercept, '.6g')]\nfor _name, _value in _coefficients.items():\n    _sign = ' + ' if _value >= 0 else ' - '\n    _terms.append(_sign + format(abs(_value), '.6g') + '×' + _name)\nmodel = {\n    'type': 'linear_regression',\n    'target': str(_target),\n    'features': [str(value) for value in _features],\n    'fit_intercept': bool(_fit_intercept),\n    'intercept': _intercept,\n    'coefficients': _coefficients,\n    'equation': ''.join(_terms)\n}\n\nreturn prediction, metrics, model",
+  "source": "user-created"
+}

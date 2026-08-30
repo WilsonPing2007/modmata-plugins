@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "updated": "2026-08-30T10:07:04.822Z",
+  "count": 14,
+  "plugins": [
+    {
+      "id": "csv-feature-distribution",
+      "name": "特征分布图",
+      "icon": "chart-no-axes-column",
+      "category": "统计分析",
+      "description": "连接数据导入插件，选择一个特征；数值列生成 300 DPI 直方图、KDE、均值和中位数，类别列生成频数柱状图。",
+      "version": "3.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "eda-bivariate-relationship",
+      "name": "双变量关系图",
+      "icon": "link",
+      "category": "统计分析",
+      "description": "选择两个字段后自动生成 300 DPI 散点趋势图、分组箱线图或列联热力图，并输出关系强度报告与原数据。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "eda-boxplot-outliers",
+      "name": "箱线图与异常值诊断",
+      "icon": "eye",
+      "category": "统计分析",
+      "description": "对最多 8 个数值字段绘制 300 DPI 箱线图或小提琴图，使用 IQR 识别异常值并输出具体行号、边界和原数据。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "eda-correlation-heatmap",
+      "name": "相关性热力图",
+      "icon": "flame",
+      "category": "统计分析",
+      "description": "从数值字段计算 Pearson、Spearman 或 Kendall 相关系数，输出 300 DPI 热力图、高相关变量对报告并原样传递数据。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "eda-data-quality-overview",
+      "name": "数据质量总览",
+      "icon": "clipboard-check",
+      "category": "统计分析",
+      "description": "一键统计样本量、字段类型、缺失、重复、常量列和近常量列，输出 300 DPI 质量总览图、字段级 JSON 报告并原样传递数据。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "eda-scatter-matrix",
+      "name": "散点矩阵",
+      "icon": "chart-scatter",
+      "category": "统计分析",
+      "description": "选择 2–6 个数值字段生成 300 DPI 两两散点矩阵，对角线显示分布，可按一个类别字段着色并输出相关矩阵报告。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "export-data",
+      "name": "数据导出",
+      "icon": "upload",
+      "category": "数据处理",
+      "description": "导出任意数量的 CSV、PNG 和 JSON；CSV / PNG / JSON 可单独输入，每个已连接的导入接口各生成一个文件。",
+      "version": "4.1.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "feature-scaling",
+      "name": "特征缩放",
+      "icon": "ruler",
+      "category": "数据处理",
+      "description": "连接上游 CSV，多选需要处理的数值列，并使用 Z-score、Min-Max、Robust 或 MaxAbs 逐列缩放；未选列保持不变。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "import-data",
+      "name": "数据导入",
+      "icon": "download",
+      "category": "数据处理",
+      "description": "选择一个 CSV 或 XLSX 数据文件，输出 CSV 格式的数据文本（自动处理中文编码，XLSX 自动转 CSV）。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "linear-regression",
+      "name": "线性回归",
+      "icon": "chart-line",
+      "category": "预测",
+      "description": "从 CSV 中选择多个特征列和一个目标列，训练普通最小二乘线性回归；输出逐行预测结果、模型评价指标和可读的回归方程。可选连接一份新数据进行预测。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "metrics-viewer",
+      "name": "指标面板",
+      "icon": "chart-no-axes-column",
+      "category": "统计分析",
+      "description": "把 JSON 指标、模型或报告渲染成 300 DPI 论文级表格图，完整保留字段并将原始 JSON 传给下游。",
+      "version": "2.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "missing-value-handler",
+      "name": "缺失值处理",
+      "icon": "search",
+      "category": "预测",
+      "description": "检测缺失值并生成 3 张 300 DPI 论文级诊断图 + JSON 报告；诊断后可选择删除行、中位数、平均值或众数填充。",
+      "version": "2.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "model-manager",
+      "name": "模型管理",
+      "icon": "package",
+      "category": "预测",
+      "description": "模型库管理：①把连入的模型（JSON）保存到模型库目录；②读取库中已有模型，勾选多选后把选中的模型输出给下游（如指标面板）。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "poisson-plot",
+      "name": "泊松分布图",
+      "icon": "chart-no-axes-column",
+      "category": "统计分析",
+      "description": "生成泊松样本并绘制 300 DPI 频率直方图、样本平滑 KDE 与理论泊松 PMF 对比图。",
+      "version": "2.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    }
+  ]
+}

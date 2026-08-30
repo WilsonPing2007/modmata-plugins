@@ -1,0 +1,31 @@
+{
+  "id": "import-data",
+  "name": "数据导入",
+  "icon": "download",
+  "category": "数据处理",
+  "description": "选择一个 CSV 或 XLSX 数据文件，输出 CSV 格式的数据文本（自动处理中文编码，XLSX 自动转 CSV）。",
+  "version": "1.0.0",
+  "masterLevel": 1,
+  "masterEvidence": [
+    "2026-08-14 用户要求的第一个真实插件：导入数据"
+  ],
+  "params": [
+    {
+      "key": "file",
+      "label": "数据文件",
+      "kind": "file",
+      "default": null,
+      "hint": "选择 CSV 或 XLSX 文件；XLSX 会自动转换成 CSV"
+    }
+  ],
+  "inputs": [],
+  "outputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    }
+  ],
+  "code": "# 数据导入：读取 CSV 文本（自动识别 UTF-8/GBK 编码），原样输出 CSV 数据\nimport os\npath = {{file}}\nif path is None or not os.path.exists(path):\n    raise RuntimeError('请先在参数区选择 CSV 或 XLSX 数据文件')\nwith open(path, 'rb') as _f:\n    _raw = _f.read()\n_text = None\nfor _enc in ('utf-8-sig', 'utf-8', 'gbk'):\n    try:\n        _text = _raw.decode(_enc)\n        break\n    except Exception:\n        continue\nif _text is None:\n    _text = _raw.decode('utf-8', errors='replace')\ndata = _text\nreturn data",
+  "source": "builtin-import-data"
+}

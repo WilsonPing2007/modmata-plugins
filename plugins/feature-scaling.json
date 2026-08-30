@@ -1,0 +1,107 @@
+{
+  "id": "feature-scaling",
+  "name": "特征缩放",
+  "icon": "ruler",
+  "category": "数据处理",
+  "description": "连接上游 CSV，多选需要处理的数值列，并使用 Z-score、Min-Max、Robust 或 MaxAbs 逐列缩放；未选列保持不变。",
+  "version": "1.0.0",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "输入和输出均为 CSV；支持多列选择与四种常用特征缩放方法"
+  ],
+  "params": [
+    {
+      "key": "method",
+      "label": "缩放方法",
+      "kind": "enum",
+      "default": "Z-score",
+      "options": [
+        "Z-score",
+        "Min-Max",
+        "Robust",
+        "MaxAbs"
+      ],
+      "hint": "选择一种缩放方法；每个选中列独立计算统计量"
+    },
+    {
+      "key": "features",
+      "label": "选择列（多选）",
+      "kind": "columns",
+      "default": [],
+      "hint": "先连接并运行上游 CSV"
+    },
+    {
+      "key": "min_value",
+      "label": "Min-Max 下限",
+      "kind": "float",
+      "default": 0,
+      "hint": "仅 Min-Max 使用；缩放后的目标下限",
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "Min-Max"
+        ]
+      }
+    },
+    {
+      "key": "max_value",
+      "label": "Min-Max 上限",
+      "kind": "float",
+      "default": 1,
+      "hint": "仅 Min-Max 使用；缩放后的目标上限",
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "Min-Max"
+        ]
+      }
+    },
+    {
+      "key": "q_low",
+      "label": "Robust 下分位数",
+      "kind": "float",
+      "default": 25,
+      "hint": "仅 Robust 使用；默认第 25 百分位",
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "Robust"
+        ]
+      }
+    },
+    {
+      "key": "q_high",
+      "label": "Robust 上分位数",
+      "kind": "float",
+      "default": 75,
+      "hint": "仅 Robust 使用；默认第 75 百分位",
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "Robust"
+        ]
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "in",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    }
+  ],
+  "code": "# 特征缩放：对 CSV 中选定的数值列逐列处理，未选列保持不变\nimport io\nimport pandas as pd\n\n_method = {{method}}\n_features = {{features}}\n_min_value = float({{min_value}})\n_max_value = float({{max_value}})\n_q_low = float({{q_low}})\n_q_high = float({{q_high}})\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\n\nif isinstance(data, pd.DataFrame):\n    _df = data.copy()\nelif isinstance(data, bytes):\n    _text = None\n    for _encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n        try:\n            _text = data.decode(_encoding)\n            break\n        except UnicodeDecodeError:\n            continue\n    if _text is None:\n        raise RuntimeError('CSV 编码无法识别')\n    _df = pd.read_csv(io.StringIO(_text))\nelif isinstance(data, str):\n    _df = pd.read_csv(io.StringIO(data.lstrip('\\ufeff')))\nelse:\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\nif not isinstance(_features, (list, tuple)) or len(_features) == 0:\n    raise RuntimeError('请至少选择一个需要缩放的列')\n\n_missing = [str(_column) for _column in _features if _column not in _df.columns]\nif _missing:\n    raise RuntimeError('CSV 中找不到这些列：' + '、'.join(_missing))\n\nif _method == 'Min-Max' and not _min_value < _max_value:\n    raise RuntimeError('Min-Max 下限必须小于上限')\nif _method == 'Robust' and not (0 <= _q_low < _q_high <= 100):\n    raise RuntimeError('Robust 分位数必须满足 0 ≤ 下分位数 < 上分位数 ≤ 100')\n\nfor _column in _features:\n    _original = _df[_column]\n    _numeric = pd.to_numeric(_original, errors='coerce')\n    _invalid = _original.notna() & _numeric.isna()\n    if bool(_invalid.any()):\n        _examples = _original[_invalid].astype(str).head(3).tolist()\n        raise RuntimeError('列「' + str(_column) + '」包含非数值内容，例如：' + '、'.join(_examples))\n\n    if _method == 'Z-score':\n        _center = _numeric.mean()\n        _scale = _numeric.std(ddof=0)\n        _df[_column] = 0.0 if pd.isna(_scale) or _scale == 0 else (_numeric - _center) / _scale\n    elif _method == 'Min-Max':\n        _source_min = _numeric.min()\n        _source_range = _numeric.max() - _source_min\n        if pd.isna(_source_range) or _source_range == 0:\n            _df[_column] = _min_value\n        else:\n            _df[_column] = (_numeric - _source_min) / _source_range * (_max_value - _min_value) + _min_value\n    elif _method == 'Robust':\n        _center = _numeric.median()\n        _low = _numeric.quantile(_q_low / 100.0)\n        _high = _numeric.quantile(_q_high / 100.0)\n        _scale = _high - _low\n        _df[_column] = 0.0 if pd.isna(_scale) or _scale == 0 else (_numeric - _center) / _scale\n    elif _method == 'MaxAbs':\n        _scale = _numeric.abs().max()\n        _df[_column] = 0.0 if pd.isna(_scale) or _scale == 0 else _numeric / _scale\n    else:\n        raise RuntimeError('不支持的缩放方法：' + str(_method))\n\nreturn _df.to_csv(index=False, lineterminator='\\n')",
+  "source": "user-created"
+}

@@ -1,0 +1,47 @@
+{
+  "id": "export-data",
+  "name": "数据导出",
+  "icon": "upload",
+  "category": "数据处理",
+  "description": "导出任意数量的 CSV、PNG 和 JSON；CSV / PNG / JSON 可单独输入，每个已连接的导入接口各生成一个文件。",
+  "version": "4.1.0",
+  "masterLevel": 1,
+  "masterEvidence": [
+    "支持 CSV/PNG 单独运行；同名导入接口有几个已连接实例，就导出几个文件"
+  ],
+  "params": [
+    {
+      "key": "folder",
+      "label": "导出文件夹",
+      "kind": "folder",
+      "default": "C:\\Users\\12055\\Desktop\\MM",
+      "hint": "选择导出文件夹；实际收到几个 CSV/PNG，就导出几个文件"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "in",
+      "required": false,
+      "multiple": true
+    },
+    {
+      "name": "image",
+      "type": "Image",
+      "direction": "in",
+      "required": false,
+      "multiple": true
+    },
+    {
+      "name": "json",
+      "type": "JSON",
+      "direction": "in",
+      "required": false,
+      "multiple": true
+    }
+  ],
+  "outputs": [],
+  "code": "# 多文件导出：每个已连接的 CSV/PNG 导入接口各写出一个文件\nimport os\nimport base64\nimport binascii\n\ntry:\n    _json_input = json\nexcept NameError:\n    _json_input = None\nimport json as _json_module\n\nout_dir = {{folder}}\nif out_dir is None or not os.path.isdir(out_dir):\n    _fallback_dir = os.path.join(os.path.expanduser('~'), 'Desktop', 'MM')\n    if os.path.isdir(_fallback_dir):\n        out_dir = _fallback_dir\n    else:\n        raise RuntimeError('请先在参数区选择有效的导出文件夹（默认导出到桌面\\MM 也不存在）')\n\ntry:\n    _data_input = data\nexcept NameError:\n    _data_input = None\ntry:\n    _image_input = image\nexcept NameError:\n    _image_input = None\n\ndef _items(_value):\n    if _value is None:\n        return []\n    if isinstance(_value, (list, tuple)):\n        return [_item for _item in _value if _item is not None]\n    return [_value]\n\ndef _available_path(_filename):\n    _stem, _ext = os.path.splitext(_filename)\n    _candidate = os.path.join(out_dir, _filename)\n    _number = 1\n    while os.path.exists(_candidate):\n        _candidate = os.path.join(out_dir, _stem + ' (' + str(_number) + ')' + _ext)\n        _number += 1\n    return _candidate\n\n_data_items = _items(_data_input)\n_image_items = _items(_image_input)\n_json_items = _items(_json_input)\nif not _data_items and not _image_items and not _json_items:\n    raise RuntimeError('没有可导出的内容：CSV、PNG 或 JSON 至少连接一个即可')\n\n_prepared_csv = []\nfor _index, _item in enumerate(_data_items, start=1):\n    if isinstance(_item, bytes):\n        try:\n            _text = _item.decode('utf-8-sig')\n        except UnicodeDecodeError:\n            _text = _item.decode('gbk')\n    elif isinstance(_item, str):\n        _text = _item\n    elif hasattr(_item, 'to_csv'):\n        _text = _item.to_csv(index=False)\n    else:\n        raise RuntimeError('第' + str(_index) + '个 CSV 输入必须是文本、字节或数据表')\n    _prepared_csv.append(_text.lstrip('\\ufeff'))\n\n_prepared_png = []\nfor _index, _item in enumerate(_image_items, start=1):\n    if isinstance(_item, bytes):\n        _png = _item\n    elif isinstance(_item, str):\n        _encoded = _item.split(',', 1)[-1] if _item.strip().startswith('data:') else _item.strip()\n        try:\n            _png = base64.b64decode(_encoded, validate=True)\n        except (binascii.Error, ValueError):\n            raise RuntimeError('第' + str(_index) + '个 PNG 输入不是有效的图片数据')\n    else:\n        raise RuntimeError('第' + str(_index) + '个 PNG 输入格式不支持')\n    _prepared_png.append(_png)\n\n_saved = []\nfor _index, _text in enumerate(_prepared_csv, start=1):\n    _name = '导出数据.csv' if len(_prepared_csv) == 1 else '导出数据_' + str(_index) + '.csv'\n    _path = _available_path(_name)\n    with open(_path, 'w', encoding='utf-8-sig', newline='') as _file:\n        _file.write(_text)\n    _saved.append(os.path.basename(_path))\n\nfor _index, _png in enumerate(_prepared_png, start=1):\n    _name = '导出图片.png' if len(_prepared_png) == 1 else '导出图片_' + str(_index) + '.png'\n    _path = _available_path(_name)\n    with open(_path, 'wb') as _file:\n        _file.write(_png)\n    _saved.append(os.path.basename(_path))\n\n_json_prepared = []\nfor _index, _item in enumerate(_json_items, start=1):\n    if isinstance(_item, (dict, list)):\n        _json_prepared.append(_item)\n    else:\n        raise RuntimeError('第 ' + str(_index) + ' 个 JSON 输入必须是对象或数组')\n\nfor _index, _item in enumerate(_json_prepared, start=1):\n    _name = '导出数据.json' if len(_json_prepared) == 1 else '导出数据_' + str(_index) + '.json'\n    _path = _available_path(_name)\n    with open(_path, 'w', encoding='utf-8') as _file:\n        _json_module.dump(_item, _file, ensure_ascii=False, indent=2)\n    _saved.append(os.path.basename(_path))\n\nreturn '已导出 ' + str(len(_saved)) + ' 个文件：' + '、'.join(_saved)",
+  "source": "builtin-export-data"
+}

@@ -1,0 +1,39 @@
+{
+  "id": "csv-feature-distribution",
+  "name": "特征分布图",
+  "icon": "chart-no-axes-column",
+  "category": "统计分析",
+  "description": "连接数据导入插件，选择一个特征；数值列生成 300 DPI 直方图、KDE、均值和中位数，类别列生成频数柱状图。",
+  "version": "3.0.0",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "通过 data 输入端口接收数据导入插件输出的 CSV 文本",
+    "特征分布图升级为 2026 国赛论文级规范：300 DPI、数值 KDE、统计标注"
+  ],
+  "params": [
+    {
+      "key": "feature",
+      "label": "选择特征",
+      "kind": "column",
+      "default": "",
+      "hint": "先运行上游数据导入插件，再从 CSV 表头选择特征"
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "in",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "name": "image",
+      "type": "Image",
+      "direction": "out"
+    }
+  ],
+  "code": "# 特征分布图：2026 国赛论文级数值直方图/KDE 或分类频数柱状图\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport seaborn as sns\nfrom matplotlib.ticker import MaxNLocator\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Arial', 'Microsoft YaHei', 'SimHei', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 15,\n    'axes.labelsize': 11,\n    'xtick.labelsize': 9,\n    'ytick.labelsize': 9,\n    'legend.fontsize': 9,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nNAVY = '#1F3A93'\nORANGE = '#F39C12'\nTEXT = '#333333'\nGRID = '#E0E0E0'\nfeature = {{feature}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        text = None\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                text = value.decode(encoding)\n                break\n            except UnicodeDecodeError:\n                continue\n        if text is None:\n            raise RuntimeError('CSV 编码无法识别')\n        return pd.read_csv(io.StringIO(text))\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是数据导入插件输出的 CSV 数据')\n\n\ndef _style_axes(ax, grid_axis='y'):\n    ax.spines['top'].set_visible(False)\n    ax.spines['right'].set_visible(False)\n    ax.spines['left'].set_color('#999999')\n    ax.spines['bottom'].set_color('#999999')\n    ax.spines['left'].set_linewidth(0.8)\n    ax.spines['bottom'].set_linewidth(0.8)\n    ax.tick_params(colors=TEXT, direction='out', length=4)\n    ax.grid(axis=grid_axis, linestyle='--', linewidth=0.5, color=GRID, alpha=0.55)\n    ax.set_axisbelow(True)\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif feature is None or str(feature).strip() == '':\n    raise RuntimeError('请先选择一个特征')\n\n_df = _to_frame(data)\nif feature not in _df.columns:\n    raise RuntimeError('CSV 中找不到特征：' + str(feature))\n\n_series = _df[feature].dropna()\nif _series.empty:\n    raise RuntimeError('所选特征没有可绘制的数据')\n\n_numeric = pd.to_numeric(_series, errors='coerce')\n_numeric_ratio = float(_numeric.notna().mean())\n_fig, _ax = plt.subplots(figsize=(8.5, 5.7))\n\nif _numeric_ratio >= 0.8:\n    _values = _numeric.dropna().astype(float)\n    sns.histplot(_values, bins='auto', stat='count', kde=len(_values) >= 3 and _values.nunique() > 1, color=NAVY, edgecolor='white', linewidth=0.8, alpha=0.82, ax=_ax, line_kws={'linewidth': 1.8, 'color': ORANGE})\n    _mean = float(_values.mean())\n    _median = float(_values.median())\n    _ax.axvline(_mean, color=ORANGE, linestyle='--', linewidth=1.5, label='均值 = {:.3g}'.format(_mean))\n    _ax.axvline(_median, color='#27AE60', linestyle=':', linewidth=1.8, label='中位数 = {:.3g}'.format(_median))\n    _ax.set_xlabel(str(feature), color=TEXT)\n    _ax.set_ylabel('频数', color=TEXT)\n    _ax.set_title('{} 的数值分布'.format(feature), fontweight='bold', color='#000000', pad=12)\n    _ax.legend(frameon=False, loc='best')\n    _fig.text(0.99, 0.01, '有效样本 n = {}；缺失值未参与绘图'.format(len(_values)), ha='right', fontsize=8, color='#666666', style='italic')\nelse:\n    _counts_all = _series.astype(str).value_counts(dropna=False)\n    _counts = _counts_all.head(30)\n    _x = np.arange(len(_counts))\n    _bars = _ax.bar(_x, _counts.values, width=0.72, color=NAVY, edgecolor='white', linewidth=0.7, alpha=0.92)\n    _ax.set_xticks(_x)\n    _ax.set_xticklabels(_counts.index, rotation=35, ha='right')\n    _ax.set_xlabel(str(feature), color=TEXT)\n    _ax.set_ylabel('频数', color=TEXT)\n    _ax.set_title('{} 的类别频数'.format(feature), fontweight='bold', color='#000000', pad=12)\n    _ax.yaxis.set_major_locator(MaxNLocator(integer=True))\n    _offset = max(1.0, float(_counts.max()) * 0.015)\n    for _bar, _count in zip(_bars, _counts.values):\n        _ax.text(_bar.get_x() + _bar.get_width() / 2, float(_count) + _offset, str(int(_count)), ha='center', va='bottom', fontsize=8, color=TEXT)\n    _shown = len(_counts)\n    _suffix = '；仅显示频数最高的 30 类' if len(_counts_all) > 30 else ''\n    _fig.text(0.99, 0.01, '有效样本 n = {}；类别数 = {}{}'.format(len(_series), len(_counts_all), _suffix), ha='right', fontsize=8, color='#666666', style='italic')\n\n_style_axes(_ax, 'y')\n_fig.tight_layout(rect=(0, 0.04, 1, 1))\n_buf = io.BytesIO()\n_fig.savefig(_buf, format='png', bbox_inches='tight', pad_inches=0.18, dpi=300, facecolor='white')\nplt.close(_fig)\nreturn 'data:image/png;base64,' + base64.b64encode(_buf.getvalue()).decode()",
+  "source": "user-created"
+}
