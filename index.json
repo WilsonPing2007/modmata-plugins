@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-08-30T10:07:04.822Z",
-  "count": 14,
+  "updated": "2026-08-30T11:19:19.947Z",
+  "count": 15,
   "plugins": [
     {
       "id": "csv-feature-distribution",
@@ -79,6 +79,16 @@
       "icon": "ruler",
       "category": "数据处理",
       "description": "连接上游 CSV，多选需要处理的数值列，并使用 Z-score、Min-Max、Robust 或 MaxAbs 逐列缩放；未选列保持不变。",
+      "version": "1.0.0",
+      "author": "ModMata 官方",
+      "updated": "2026-08-30"
+    },
+    {
+      "id": "grey-prediction",
+      "name": "灰色预测 GM(1,1)",
+      "icon": "chart",
+      "category": "预测",
+      "description": "经典灰色预测 GM(1,1)：对原始序列做累加生成与紧邻均值，最小二乘估计发展系数 a 与灰作用量 b，输出拟合值、未来预测值与模型精度（后验差比值 C、小误差概率 P、精度等级）。",
       "version": "1.0.0",
       "author": "ModMata 官方",
       "updated": "2026-08-30"

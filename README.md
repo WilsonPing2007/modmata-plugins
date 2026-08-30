@@ -13,7 +13,15 @@ modmata-plugins/
     └── build-index.cjs # 扫描 plugins/ 重新生成 index.json
 ```
 
-## 如何发布一个新插件
+## 如何发布一个新插件（推荐：一键脚本）
+
+1. 把你的插件 json 文件放进 `plugins/`（文件名 = 插件 id，如 `my-plugin.json`）
+2. **双击 `publish.bat`**，按提示回车即可
+3. 脚本自动：生成索引 → 提交 → 推送到 GitHub → 提示发布成功
+
+> 需要 Node.js、Git、GitHub CLI（已登录 `gh auth login`）。首次会弹浏览器授权一次。
+
+## 手动发布（等价流程）
 
 1. 把你的插件 json 文件放进 `plugins/`（文件名 = 插件 id，如 `my-plugin.json`）
 2. 运行 `node scripts/build-index.cjs` 重新生成索引
