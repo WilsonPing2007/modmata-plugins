@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-08-30T11:19:19.947Z",
+  "updated": "2026-08-30T15:06:19.442Z",
   "count": 15,
   "plugins": [
     {
@@ -9,7 +9,7 @@
       "icon": "chart-no-axes-column",
       "category": "统计分析",
       "description": "连接数据导入插件，选择一个特征；数值列生成 300 DPI 直方图、KDE、均值和中位数，类别列生成频数柱状图。",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -19,7 +19,7 @@
       "icon": "link",
       "category": "统计分析",
       "description": "选择两个字段后自动生成 300 DPI 散点趋势图、分组箱线图或列联热力图，并输出关系强度报告与原数据。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -29,7 +29,7 @@
       "icon": "eye",
       "category": "统计分析",
       "description": "对最多 8 个数值字段绘制 300 DPI 箱线图或小提琴图，使用 IQR 识别异常值并输出具体行号、边界和原数据。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -39,7 +39,7 @@
       "icon": "flame",
       "category": "统计分析",
       "description": "从数值字段计算 Pearson、Spearman 或 Kendall 相关系数，输出 300 DPI 热力图、高相关变量对报告并原样传递数据。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -49,7 +49,7 @@
       "icon": "clipboard-check",
       "category": "统计分析",
       "description": "一键统计样本量、字段类型、缺失、重复、常量列和近常量列，输出 300 DPI 质量总览图、字段级 JSON 报告并原样传递数据。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -59,7 +59,7 @@
       "icon": "chart-scatter",
       "category": "统计分析",
       "description": "选择 2–6 个数值字段生成 300 DPI 两两散点矩阵，对角线显示分布，可按一个类别字段着色并输出相关矩阵报告。",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -119,7 +119,7 @@
       "icon": "chart-no-axes-column",
       "category": "统计分析",
       "description": "把 JSON 指标、模型或报告渲染成 300 DPI 论文级表格图，完整保留字段并将原始 JSON 传给下游。",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -129,7 +129,7 @@
       "icon": "search",
       "category": "预测",
       "description": "检测缺失值并生成 3 张 300 DPI 论文级诊断图 + JSON 报告；诊断后可选择删除行、中位数、平均值或众数填充。",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
@@ -149,7 +149,7 @@
       "icon": "chart-no-axes-column",
       "category": "统计分析",
       "description": "生成泊松样本并绘制 300 DPI 频率直方图、样本平滑 KDE 与理论泊松 PMF 对比图。",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     }
