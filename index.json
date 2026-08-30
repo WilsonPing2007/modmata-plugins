@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-08-30T15:06:19.442Z",
+  "updated": "2026-08-30T16:50:01.315Z",
   "count": 15,
   "plugins": [
     {
@@ -29,7 +29,7 @@
       "icon": "eye",
       "category": "统计分析",
       "description": "对最多 8 个数值字段绘制 300 DPI 箱线图或小提琴图，使用 IQR 识别异常值并输出具体行号、边界和原数据。",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "author": "ModMata 官方",
       "updated": "2026-08-30"
     },
