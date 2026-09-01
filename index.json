@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-01T12:37:25.260Z",
+  "updated": "2026-09-01T12:48:53.435Z",
   "count": 16,
   "plugins": [
     {
@@ -60,7 +60,7 @@
       "category": "统计分析",
       "description": "选择 2–6 个数值字段生成 300 DPI 两两散点矩阵，对角线显示分布，可按一个类别字段着色并输出相关矩阵报告。",
       "version": "1.0.2",
-      "author": "ModMata 官方",
+      "author": "Wilson.",
       "updated": "2026-09-01"
     },
     {
