@@ -1,0 +1,276 @@
+{
+  "id": "period-analysis",
+  "code": "# 周期检验（时序分析）：时序图 / 分组统计 / 自相关函数ACF / FFT功率谱分析 / STL季节分解\n# 出图遵循顶刊规范（300DPI、去上右边框、#CCCCCC虚线网格、#1F3A93主色、微软雅黑）；report 全平铺中文键\nimport io as _io\nimport json\nimport csv as _csv\nimport base64\nimport re as _re\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfrom scipy import stats\n\nmethod = {{method}}\nvalue_column = {{value_column}}\ntime_column = {{time_column}}\nsegment_index = {{segment_index}}\nsegment_mode = {{segment_mode}}\nsmooth_window = int({{smooth_window}})\ngroup_column = {{group_column}}\nerrorbar_type = {{errorbar_type}}\nmax_lag = int({{max_lag}})\nsampling_interval = float({{sampling_interval}})\ntop_peaks = int({{top_peaks}})\nperiod = int({{period}})\nrobust = {{robust}}\nseasonal_window = {{seasonal_window}}\ntrend_window = {{trend_window}}\nalpha = 0.05\n\n# ───────────── 通用工具 ─────────────\nplt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'Arial']\nplt.rcParams['axes.unicode_minus'] = False\nplt.rcParams['figure.facecolor'] = 'white'\nNAVY = '#1F3A93'\nGOLD = '#F39C12'\nGREEN = '#27AE60'\nRED = '#C0392B'\nBROWN = '#8D6E63'\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(_io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(_io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _fmt(v, nd=4):\n    if v is None:\n        return None\n    try:\n        f = float(v)\n    except (TypeError, ValueError):\n        return v\n    if np.isnan(f) or np.isinf(f):\n        return None\n    return round(f, nd)\n\n\ndef _style(ax):\n    for s in ('top', 'right'):\n        ax.spines[s].set_visible(False)\n    ax.spines['left'].set_color('#333333')\n    ax.spines['bottom'].set_color('#333333')\n    ax.grid(True, axis='y', linestyle='--', linewidth=0.5, color='#CCCCCC', alpha=0.5)\n    ax.set_axisbelow(True)\n    ax.tick_params(labelsize=9, colors='#555555')\n\n\ndef _png(fig):\n    _buf = _io.BytesIO()\n    fig.savefig(_buf, format='png', dpi=300, bbox_inches='tight', facecolor='white')\n    plt.close(fig)\n    return 'data:image/png;base64,' + base64.b64encode(_buf.getvalue()).decode('ascii')\n\n\ndef _clean_series(df, col):\n    \"\"\"数值化 + 缺失值线性插值，返回 (Series, 缺失数)\"\"\"\n    s = pd.to_numeric(df[col], errors='coerce').astype(float)\n    n_miss = int(s.isna().sum())\n    if n_miss:\n        s = s.interpolate(method='linear', limit_direction='both').ffill().bfill()\n    return s, n_miss\n\n\ndef _x_axis(df, time_column):\n    \"\"\"x 轴：时间列（解析成功率高时）或序号。返回 (x, 是否时间)\"\"\"\n    if time_column and time_column in df.columns:\n        dt = pd.to_datetime(df[time_column], errors='coerce')\n        if dt.notna().sum() >= max(2, int(len(dt) * 0.9)):\n            return dt, True\n    return np.arange(len(df)), False\n\n\ndef _check_col(df, col, name):\n    if not col:\n        raise RuntimeError('请选择' + name)\n    if col not in df.columns:\n        raise RuntimeError(name + '「' + str(col) + '」不存在，可选列：' + str(list(df.columns)))\n\n\n# ───────────── 智能列识别 ─────────────\n\ndef _is_idlike(df, col):\n    cl = str(col).lower()\n    if _re.search(r'\\b(id|code|sku|no)\\b', cl) or any(k in cl for k in ('编码', '编号', '序号', '单号', '条码')):\n        return True\n    s = df[col].dropna()\n    if len(s) == 0:\n        return True\n    num = pd.to_numeric(s, errors='coerce')\n    if num.notna().sum() >= max(2, int(len(s) * 0.9)):\n        # 数值列：只有\"整数编码\"且唯一值极高才判为 ID（如单品编码）；连续小数不算\n        intlike = bool((num.dropna() % 1 == 0).all())\n        return intlike and len(s) > 10 and s.nunique() / float(len(s)) > 0.95\n    # 非数值列：唯一值比例极高视为 ID（但能解析为日期/时间的列除外）\n    dt = pd.to_datetime(s, errors='coerce')\n    if dt.notna().sum() >= max(2, int(len(s) * 0.9)):\n        return False\n    return len(s) > 10 and s.nunique() / float(len(s)) > 0.95\n\n\ndef _auto_time_columns(df, exclude=()):\n    \"\"\"找出能解析为时间（datetime 成功率≥90%）的列，排除 ID 类与普通整数列\"\"\"\n    out = []\n    for c in df.columns:\n        if c in exclude or _is_idlike(df, c):\n            continue\n        raw = df[c].dropna()\n        if len(raw) < 2:\n            continue\n        num = pd.to_numeric(raw, errors='coerce')\n        if num.notna().sum() >= max(2, int(len(raw) * 0.9)):\n            # 纯数值列：仅当像 YYYYMMDD 的 8 位整数日期（18000101~22000101）才视为时间\n            intlike = bool((num.dropna() % 1 == 0).all())\n            if not intlike:\n                continue\n            nums = num.dropna().astype('int64')\n            if not ((nums >= 18000101) & (nums <= 22000101)).all():\n                continue\n        dt = pd.to_datetime(raw, errors='coerce')\n        if dt.notna().sum() >= max(2, int(len(raw) * 0.9)):\n            out.append(c)\n    return out\n\n\ndef _auto_num_columns(df, exclude=()):\n    \"\"\"找出数值化成功率≥80% 且非时间/非ID 的列（候选数值列）\"\"\"\n    out = []\n    for c in df.columns:\n        if c in exclude or _is_idlike(df, c):\n            continue\n        num = pd.to_numeric(df[c], errors='coerce')\n        if num.notna().sum() >= max(2, int(len(df) * 0.8)):\n            out.append(c)\n    return out\n\n\ndef _pick_default_numeric(df, cands):\n    \"\"\"从候选数值列里挑信息量最大的：非缺失数 × 标准差，含\"销量/数量/值\"等语义关键词的列优先\"\"\"\n    _SEM_KEYWORDS = ('销量', '销售量', '数量', '需求', '产量', '值', '价', 'value', 'amount', 'price', 'quantity')\n    best, best_score = None, -1.0\n    for c in cands:\n        num = pd.to_numeric(df[c], errors='coerce')\n        sd = float(num.std(ddof=1)) if num.notna().sum() > 1 else 0.0\n        score = float(num.notna().sum()) * (sd if sd > 0 else 1.0)\n        cl = str(c).lower()\n        if any(k in cl for k in _SEM_KEYWORDS):\n            score *= 1.5\n        if score > best_score:\n            best, best_score = c, score\n    return best\n\n\ndef _auto_group_columns(df, exclude=()):\n    \"\"\"找出类别列：非ID、类别数适中（2~30）；低基数的整数列（如月份1-12）也算类别\"\"\"\n    out = []\n    for c in df.columns:\n        if c in exclude or _is_idlike(df, c):\n            continue\n        s = df[c].dropna()\n        if len(s) < 2:\n            continue\n        nuniq = s.nunique()\n        if not (2 <= nuniq <= 30):\n            continue\n        num = pd.to_numeric(s, errors='coerce')\n        num_ok = num.notna().sum() >= max(2, int(len(s) * 0.9))\n        if num_ok:\n            # 数值列仅当为整数（低基数类别如 1~12 月）时才视作类别列；连续小数不算\n            if not bool((num.dropna() % 1 == 0).all()):\n                continue\n        out.append(c)\n    return out\n\n\n# ───────────── 时间分段 ─────────────\n_SEG_OPTIONS = ('不分段', '自动分段', '按年', '按季度', '按月', '按周', '按天')\n_SEG_PICK_OPTIONS = ('全部',) + tuple('第{}段'.format(i) for i in range(1, 13))\n\n\ndef _seg_granularity(dt_series, mode):\n    \"\"\"自动选粒度：让段数落在合理范围——排除少于2段（太粗无意义）或超过12段（太碎、图上放不下），\n    取段数最接近 8 的粒度；平手取更粗（画面更清爽）。\n    例：3年→按季度12段、1年→按季度4段、8个月→按月8段、45天→按周6段、10天→按天、30天→按周(自动不会选按天30段)\"\"\"\n    if mode != '自动分段':\n        return mode\n    s = pd.Series(list(dt_series.dropna()))\n    if len(s) < 2:\n        return '按天'\n    cands = ('按年', '按季度', '按月', '按周', '按天')\n    best, best_score = None, None\n    for m in cands:\n        n_seg = len({_seg_key(t, m) for t in s})\n        if n_seg < 2 or n_seg > 12:\n            continue  # 段数太少没意义；太多会糊（如 1085 天按天 1085 段）\n        score = abs(n_seg - 8)\n        if best_score is None or score < best_score or (score == best_score and cands.index(m) < cands.index(best)):\n            best, best_score = m, score\n    return best if best is not None else '按年'  # 兜底：所有粒度都超界时取最粗\n\n\ndef _time_resolution(xdt):\n    \"\"\"数据时间分辨率：判断一天内是否有多条记录（小时/分钟级）\"\"\"\n    diffs = pd.Series(xdt.dropna().sort_values()).diff().dropna()\n    if len(diffs) == 0:\n        return None\n    med = diffs.median()\n    if med < pd.Timedelta(minutes=1):\n        return '秒级（一分钟内多条）'\n    if med < pd.Timedelta(hours=1):\n        return '分钟级（一天内多条）'\n    if med < pd.Timedelta(days=1):\n        return '小时级（一天内多条）'\n    if med < pd.Timedelta(days=2):\n        return '天级（每天约1条）'\n    if med < pd.Timedelta(days=8):\n        return '周级'\n    return '月级或更粗'\n\n\ndef _seg_key(t, mode):\n    \"\"\"单个时间点 → 所属段标签\"\"\"\n    if mode == '按年':\n        return str(t.year) + '年'\n    if mode == '按季度':\n        return str(t.year) + '年Q' + str((t.month - 1) // 3 + 1)\n    if mode == '按月':\n        return t.strftime('%Y-%m')\n    if mode == '按周':\n        return t.strftime('%Y') + '年W' + str(t.isocalendar()[1]).zfill(2)\n    return t.strftime('%Y-%m-%d')\n\n\ndef _segments(dt_series, mode):\n    \"\"\"返回 [(起点idx, 终点idx, 段标签), ...]（按连续同标签切块）\"\"\"\n    keys = [_seg_key(t, mode) for t in dt_series]\n    out, start, cur = [], 0, keys[0]\n    for i in range(1, len(keys) + 1):\n        if i == len(keys) or keys[i] != cur:\n            out.append((start, i - 1, cur))\n            if i < len(keys):\n                start, cur = i, keys[i]\n    return out\n\n\ndef _sig(p):\n    return '*' if p < 0.05 else ''\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\ndf = _to_frame(data)\n\nreport = {'检验方法': method, '数值列': value_column}\nimage = None\n\n# ═══════════════ 1. 时序图 ═══════════════\nif method == '时序图':\n    # ── 智能列识别：数值列/时间列留空时由插件自动判断 ──\n    time_cands = _auto_time_columns(df)\n    num_cands = _auto_num_columns(df, exclude=time_cands)\n    if not value_column:\n        value_column = _pick_default_numeric(df, num_cands)\n        if value_column is None:\n            raise RuntimeError('未找到可用的数值列（请检查数据是否为数值型，或手动指定数值列）')\n    if not time_column:\n        time_column = time_cands[0] if time_cands else ''\n    _check_col(df, value_column, '数值列')\n    s, n_miss = _clean_series(df, value_column)\n    x, is_time = _x_axis(df, time_column)\n    arr = s.to_numpy()\n    n = len(arr)\n    if n < 3:\n        raise RuntimeError('清洗后有效样本不足 3 个')\n    # ── 大数据自动聚合降采样（>4000 点时按 天→周→月 聚合均值，保持画面清爽）──\n    agg_note = None\n    if is_time and n > 4000:\n        _xdt = pd.to_datetime(x, errors='coerce')\n        if _xdt.notna().sum() >= int(n * 0.9):\n            _tmp = pd.DataFrame({'t': _xdt, 'v': arr}).dropna()\n            for _rule, _rname in (('D', '天'), ('W', '周'), ('M', '月')):\n                _g = _tmp.set_index('t').resample(_rule).mean().dropna()\n                if len(_g) <= 4000 or _rule == 'M':\n                    x = pd.Series(_g.index)\n                    arr = _g['v'].to_numpy()\n                    n = len(arr)\n                    agg_note = '按{}聚合显示（{}→{}点）'.format(_rname, int(len(_tmp)), n)\n                    break\n    # ── 数据时间分辨率（识别\"一天内多条记录\"等情形）──\n    time_res = None\n    if is_time:\n        _rdt = pd.to_datetime(x, errors='coerce')\n        if _rdt.notna().sum() >= max(2, int(n * 0.9)):\n            time_res = _time_resolution(_rdt)\n    # ── 时间分段：按文件内容自动划分时间段（仅时间轴有效）──\n    segs = None\n    seg_gran = segment_mode if segment_mode in _SEG_OPTIONS else '不分段'\n    if is_time and seg_gran != '不分段' and n >= 4:\n        xdt = pd.to_datetime(x, errors='coerce')\n        if xdt.notna().sum() >= int(n * 0.9):\n            gran = _seg_granularity(xdt.dropna(), seg_gran)\n            segs = _segments(xdt, gran)\n            if len(segs) < 2:\n                segs = None  # 只有一个段就退化为不分段\n    # ── 段选择：下拉直接选第几段（无需输入日期）──\n    seg_pick = segment_index if segment_index in _SEG_PICK_OPTIONS else '全部'\n    range_label = '全区间'\n    if segs is not None and len(segs) > 1 and seg_pick != '全部':\n        seg_no = int(seg_pick.replace('第', '').replace('段', ''))\n        if seg_no > len(segs):\n            raise RuntimeError('该数据按「' + gran + '」只分成 ' + str(len(segs))\n                               + ' 段，没有第 ' + str(seg_no) + ' 段，请在下拉中重新选择')\n        a, b, lab = segs[seg_no - 1]\n        x = x[a:b + 1]\n        arr = arr[a:b + 1]\n        n = len(arr)\n        range_label = '第{}段（{}）'.format(seg_no, lab)\n        segs = None  # 只看单段，不再叠加分段色带\n    mean = float(arr.mean())\n    sd = float(arr.std(ddof=1))\n    ma = None\n    win = smooth_window\n    if win > 1 and n > 2:\n        win = min(win, n)\n        ma = pd.Series(arr).rolling(win, center=True, min_periods=1).mean().to_numpy()\n    fig, ax = plt.subplots(figsize=(9, 4.6))\n    if n <= 120:\n        ax.plot(x, arr, color=NAVY, linewidth=2.0, marker='o', markersize=3, zorder=3)\n    else:\n        ax.plot(x, arr, color=NAVY, linewidth=1.8, zorder=3)\n    ax.axhline(mean, color=BROWN, linestyle='--', linewidth=1.2, alpha=0.9,\n               label='均值 = {:.4g}'.format(mean))\n    if ma is not None:\n        ax.plot(x, ma, color=GOLD, linewidth=1.8, label='移动平均（窗口{}）'.format(win))\n    ax.set_title('时序图：{}{}'.format(value_column, ('（' + range_label + '）' if range_label != '全区间' else '')),\n                 fontsize=14, fontweight='bold', pad=10)\n    ax.set_xlabel('时间' if is_time else '序号 t', fontsize=11, color='#333333')\n    ax.set_ylabel(value_column, fontsize=11, color='#333333')\n    ax.legend(frameon=False, fontsize=9, loc='best')\n    if segs is not None and len(segs) > 1:\n        ymin, ymax = ax.get_ylim()\n        pad = (ymax - ymin) * 0.07\n        n_seg = len(segs)\n        if n_seg <= 12:\n            # 段数适中：画淡色带 + 段名 + 分界虚线\n            ax.set_ylim(ymin, ymax + pad * 2.2)\n            lab_y = ymax + pad * 1.4\n            for i, (a, b, lab) in enumerate(segs):\n                xa, xb = x.iloc[a], x.iloc[b]\n                if i % 2 == 0:\n                    ax.axvspan(xa, xb, color=NAVY, alpha=0.028, zorder=0)\n                if i > 0:\n                    ax.axvline(xa, color='#AAAAAA', linestyle=':', linewidth=0.7, zorder=2)\n                ax.text(xa + (xb - xa) / 2, lab_y, lab, ha='center', va='bottom',\n                        fontsize=8, color='#666666')\n            ax.text(x.iloc[0], lab_y + pad * 1.0, '按「' + gran + '」分 {} 段（可下拉选段查看）'.format(n_seg),\n                    ha='left', va='bottom', fontsize=8.5, color=RED)\n        else:\n            # 段数过多（如按天切出上百段）：省略色带/段名/竖线，保持画面干净\n            ax.set_ylim(ymin, ymax + pad * 1.4)\n            ax.text(x.iloc[0], ymax + pad * 0.6,\n                    '共 {} 段（段数较多，标注已省略；可在「查看时间段」下拉逐段查看）'.format(n_seg),\n                    ha='left', va='bottom', fontsize=8.5, color=RED)\n    _style(ax)\n    if is_time:\n        plt.setp(ax.get_xticklabels(), rotation=30, ha='right')\n    k = max(1, int(n * 0.2))\n    m_head, m_tail = float(arr[:k].mean()), float(arr[-k:].mean())\n    delta = m_tail - m_head\n    trend = '上升' if delta > 0.05 * sd else ('下降' if delta < -0.05 * sd else '平稳')\n    report.update({'列识别_时间列候选': ('、'.join(map(str, time_cands)) if time_cands else '未识别到'),\n                   '列识别_数值列候选': ('、'.join(map(str, num_cands)) if num_cands else '未识别到'),\n                   '列识别_已用数值列': str(value_column),\n                   '列识别_已用时间列': (str(time_column) if time_column else '（未用，x轴按序号）')})\n    if agg_note:\n        report['显示方式'] = agg_note\n    if time_res:\n        report['时间分辨率'] = time_res\n    if segs is not None and len(segs) > 1:\n        n_seg = len(segs)\n        report.update({'分段模式': gran, '分段数': int(n_seg)})\n        MAX_SEG_REPORT = 40\n        seg_means = []\n        listed = segs if n_seg <= MAX_SEG_REPORT else segs[:MAX_SEG_REPORT]\n        for i, (a, b, lab) in enumerate(listed, 1):\n            seg_arr = arr[a:b + 1]\n            seg_mean = float(seg_arr.mean())\n            seg_sd = float(seg_arr.std(ddof=1)) if len(seg_arr) > 1 else 0.0\n            seg_means.append(seg_arr)\n            report.update({\n                '段' + str(i) + '_区间': lab,\n                '段' + str(i) + '_样本量': int(len(seg_arr)),\n                '段' + str(i) + '_均值': _fmt(seg_mean),\n                '段' + str(i) + '_标准差': _fmt(seg_sd),\n                '段' + str(i) + '_首尾差': _fmt(float(seg_arr[-1] - seg_arr[0])),\n            })\n        if n_seg > MAX_SEG_REPORT:\n            report['段统计_提示'] = '段数过多，报告仅列出前 {} 段；可在「查看时间段」下拉中逐段查看'.format(MAX_SEG_REPORT)\n        if 2 <= n_seg <= 30:\n            f_res = stats.f_oneway(*seg_means)\n            seg_f, seg_p = float(f_res.statistic), float(f_res.pvalue)\n            report['段间ANOVA_F统计量'] = _fmt(seg_f)\n            report['段间ANOVA_p值'] = _fmt(seg_p, 6)\n        elif n_seg > 30:\n            report['段间ANOVA_提示'] = '段数过多（{} 段），省略段间ANOVA检验'.format(n_seg)\n    report.update({\n        '样本量': int(n),\n        '时间区间': range_label,\n        '均值': _fmt(mean), '标准差': _fmt(sd),\n        '最小值': _fmt(float(arr.min())), '最大值': _fmt(float(arr.max())),\n        '缺失值插值数': int(n_miss),\n        '前20%均值': _fmt(m_head), '后20%均值': _fmt(m_tail),\n        '趋势方向': trend, '首尾均值差Δ': _fmt(delta),\n        '结论': ('时序图显示「' + str(value_column) + '」在观测期内整体呈' + trend + '趋势（前20%均值='\n                + '{:.4g}，后20%均值={:.4g}，Δ={:+.4g}）。'.format(m_head, m_tail, delta)\n                + ('移动平均线（窗口{}）进一步平滑了短期波动，便于观察长期趋势。'.format(win) if ma is not None else '')\n                + (('数据为' + str(time_res) + '，已识别并在分段时考虑。' if time_res and '多条' in str(time_res) else ''))\n                + (('序列按「' + gran + '」划分为 ' + str(len(segs)) + ' 段（各段统计见报告）；段间均值差异 '\n                    + ('显著' if seg_p < alpha else '不显著')\n                    + '（ANOVA F=' + '{:.3f}'.format(seg_f) + '，p=' + '{:.2e}'.format(seg_p) + '）。'\n                    if segs is not None and len(segs) > 1 and len(segs) <= 30\n                    else (('序列按「' + gran + '」划分为 ' + str(len(segs)) + ' 段（段数较多，各段统计见报告）。'\n                           if segs is not None and len(segs) > 30 else ''))))),\n    })\n    image = _png(fig)\n\n# ═══════════════ 2. 分组统计 ═══════════════\nelif method == '分组统计':\n    # ── 智能列识别：数值列/分组列留空时自动判断 ──\n    _num_cands = _auto_num_columns(df)\n    _time_cands = _auto_time_columns(df)\n    _group_cands = _auto_group_columns(df, exclude=_time_cands)  # 只排除时间列（低基数整数列仍可作分组列）\n    if not group_column:\n        group_column = _group_cands[0] if _group_cands else ''\n    if not value_column:\n        value_column = _pick_default_numeric(df, _num_cands)\n        if value_column is None:\n            raise RuntimeError('未找到可用的数值列（请检查数据是否为数值型，或手动指定数值列）')\n    _check_col(df, group_column, '分组列')\n    _check_col(df, value_column, '数值列')\n    if group_column == value_column:\n        raise RuntimeError('分组列和数值列不能是同一个列，请重新选择（分组列选类别列，数值列选被检验的数值列）')\n    sub = df[[group_column, value_column]].dropna()\n    if len(sub) == 0:\n        raise RuntimeError('分组列与数值列没有同时非缺失的行')\n    groups = {}\n    for label, g in sub.groupby(group_column, sort=True):\n        arr = pd.to_numeric(g[value_column], errors='coerce').dropna().to_numpy().astype(float)\n        if len(arr) > 0:\n            groups[str(label)] = arr\n    if len(groups) < 2:\n        raise RuntimeError('清洗非数字内容后有效分组不足 2 组（仅剩 ' + str(len(groups)) + ' 组）')\n    keys = list(groups.keys())\n    ns = [len(groups[k]) for k in keys]\n    means = [float(groups[k].mean()) for k in keys]\n    sds = [float(groups[k].std(ddof=1)) for k in keys]\n    if errorbar_type == '标准差SD':\n        errs = list(sds)\n    elif errorbar_type == '标准误SEM':\n        errs = [sd / np.sqrt(m) for sd, m in zip(sds, ns)]\n    elif errorbar_type == '95%置信区间':\n        errs = [stats.t.ppf(0.975, max(m - 1, 1)) * sd / np.sqrt(m) for sd, m in zip(sds, ns)]\n    else:\n        errs = [0.0] * len(keys)\n    ymax = max(m + e for m, e in zip(means, errs))\n    fig, ax = plt.subplots(figsize=(max(6.5, 0.9 * len(keys) + 2.5), 5))\n    xs = np.arange(len(keys))\n    ax.bar(xs, means, width=0.65, color=NAVY, edgecolor='#333333', linewidth=0.8, alpha=0.9, zorder=3)\n    if errorbar_type != '无':\n        ax.errorbar(xs, means, yerr=errs, fmt='none', ecolor='#333333', capsize=4,\n                    elinewidth=1.2, capthick=1.2, zorder=4)\n    for i, (m, e) in enumerate(zip(means, errs)):\n        ax.text(i, m + e + 0.05 * ymax, '{:.4g}'.format(m), ha='center', fontsize=9, color='#222222')\n    f_res = stats.f_oneway(*[groups[k] for k in keys])\n    f_stat, p_anova = float(f_res.statistic), float(f_res.pvalue)\n    all_ = np.concatenate([groups[k] for k in keys])\n    grand = float(all_.mean())\n    ss_between = float(sum(len(groups[k]) * (float(groups[k].mean()) - grand) ** 2 for k in keys))\n    ss_total = float(((all_ - grand) ** 2).sum())\n    eta2 = ss_between / ss_total if ss_total > 0 else None\n    ax.text(0.98, 0.96, 'ANOVA: F={:.3f}, p={:.2e}{}'.format(f_stat, p_anova, _sig(p_anova)),\n            transform=ax.transAxes, ha='right', va='top', fontsize=10, color='#333333',\n            bbox=dict(facecolor='white', edgecolor='#999999', alpha=0.9, boxstyle='round,pad=0.3'))\n    ax.set_xticks(xs)\n    ax.set_xticklabels([str(k) + '\\nn=' + str(m) for k, m in zip(keys, ns)], fontsize=9)\n    ax.set_ylim(0, ymax * 1.22)\n    ax.set_title('分组统计：按「{}」分组（{}）'.format(group_column, value_column), fontsize=14, fontweight='bold', pad=10)\n    ax.set_ylabel(value_column, fontsize=11, color='#333333')\n    _style(ax)\n    report.update({'分组列': group_column, '组数': int(len(keys)), '样本量_总': int(len(all_)),\n                   '列识别_分组列候选': ('、'.join(map(str, _group_cands)) if _group_cands else '未识别到'),\n                   '列识别_数值列候选': ('、'.join(map(str, _num_cands)) if _num_cands else '未识别到')})\n    for i, (k, g) in enumerate(zip(keys, [groups[k] for k in keys]), 1):\n        report.update({\n            '组' + str(i) + '_标签': k,\n            '组' + str(i) + '_样本量': int(len(g)),\n            '组' + str(i) + '_均值': _fmt(float(g.mean())),\n            '组' + str(i) + '_标准差': _fmt(float(g.std(ddof=1))),\n            '组' + str(i) + '_最小值': _fmt(float(g.min())),\n            '组' + str(i) + '_最大值': _fmt(float(g.max())),\n        })\n    if p_anova < alpha:\n        anova_concl = '小于显著性水平 α=' + str(alpha) + '，组间均值差异显著，提示该分组维度蕴含系统性差异（如季节/周期成分）'\n    else:\n        anova_concl = '不小于显著性水平 α=' + str(alpha) + '，组间均值差异不显著，该分组维度对' + str(value_column) + '无明显影响'\n    report.update({\n        'ANOVA_F统计量': _fmt(f_stat), 'ANOVA_p值': _fmt(p_anova, 6),\n        'ANOVA_效应量η²': _fmt(eta2), '误差棒类型': errorbar_type,\n        '结论': ('按「' + str(group_column) + '」分组的「' + str(value_column) + '」均值差异 ANOVA F=' + '{:.3f}'.format(f_stat)\n                + '，p=' + '{:.2e}'.format(p_anova) + '，' + anova_concl + '。'),\n    })\n    image = _png(fig)\n\n# ═══════════════ 3. 自相关函数 ACF ═══════════════\nelif method == '自相关函数ACF':\n    from statsmodels.tsa.stattools import acf\n    from statsmodels.stats.diagnostic import acorr_ljungbox\n    # ── 智能列识别：数值列留空时自动判断 ──\n    _time_cands = _auto_time_columns(df)\n    _num_cands = _auto_num_columns(df, exclude=_time_cands)\n    if not value_column:\n        value_column = _pick_default_numeric(df, _num_cands)\n        if value_column is None:\n            raise RuntimeError('未找到可用的数值列（请检查数据是否为数值型，或手动指定数值列）')\n    _check_col(df, value_column, '数值列')\n    s, n_miss = _clean_series(df, value_column)\n    arr = s.to_numpy()\n    n = len(arr)\n    if n < 4:\n        raise RuntimeError('清洗后有效样本不足 4 个')\n    lag = int(min(max_lag, n - 2))\n    if lag < 1:\n        raise RuntimeError('最大滞后阶数需 ≥ 1')\n    a = acf(arr, nlags=lag)\n    ci = 1.96 / np.sqrt(n)\n    sig_lags = [k for k in range(1, len(a)) if abs(a[k]) > ci]\n    peaks = []\n    for k in range(1, len(a) - 1):\n        if a[k] >= a[k - 1] and a[k] > a[k + 1] and abs(a[k]) > ci:\n            peaks.append((k, float(a[k])))\n    period_hint = None\n    if peaks:\n        k0, a0 = max(peaks, key=lambda t: abs(t[1]))\n        mult = [m for m in (2 * k0, 3 * k0) if m < len(a) and abs(a[m]) > ci]\n        if len(mult) >= 1:\n            period_hint = k0\n        elif len(peaks) >= 2:\n            ks = [p[0] for p in peaks]\n            if abs(ks[1] - ks[0]) == ks[0]:\n                period_hint = ks[0]\n        else:\n            period_hint = None\n    lb = acorr_ljungbox(arr, lags=[lag], return_df=True)\n    lb_q = float(lb['lb_stat'].iloc[0])\n    lb_p = float(lb['lb_pvalue'].iloc[0])\n    slow = n > 10 and abs(a[1]) > 0.7\n    white = len(sig_lags) == 0\n    fig, ax = plt.subplots(figsize=(9, 4.6))\n    colors = [NAVY if (k == 0 or abs(a[k]) > ci) else '#CCCCCC' for k in range(len(a))]\n    ax.bar(np.arange(len(a)), a, width=0.8, color=colors, edgecolor='#FFFFFF', linewidth=0.5, zorder=3)\n    ax.fill_between([-0.5, lag + 0.5], -ci, ci, color='#999999', alpha=0.15, zorder=1)\n    ax.axhline(0, color='#333333', linewidth=0.8, zorder=2)\n    ax.axhline(ci, color='#999999', linestyle='--', linewidth=0.8, zorder=2)\n    ax.axhline(-ci, color='#999999', linestyle='--', linewidth=0.8, zorder=2)\n    ax.text(lag, ci * 1.08, '95%置信界限 ±1.96/√n = ±{:.3f}'.format(ci),\n            fontsize=8.5, ha='right', color='#555555')\n    for k, av in sorted(peaks, key=lambda t: -abs(t[1]))[:3]:\n        ax.text(k, av + 0.06, '{}'.format(k), ha='center', fontsize=8, color=RED)\n    ax.set_title('自相关函数 ACF：{}'.format(value_column), fontsize=14, fontweight='bold', pad=10)\n    ax.set_xlabel('滞后阶数 k', fontsize=11, color='#333333')\n    ax.set_ylabel('自相关系数 r(k)', fontsize=11, color='#333333')\n    ax.set_xlim(-0.5, lag + 0.5)\n    _style(ax)\n    report.update({'样本量': int(n), '最大滞后': int(lag), '缺失值插值数': int(n_miss),\n                   '列识别_数值列候选': ('、'.join(map(str, _num_cands)) if _num_cands else '未识别到'),\n                   '列识别_已用数值列': str(value_column),\n                   '置信界限±1.96/√n': _fmt(ci), '显著滞后数': int(len(sig_lags)),\n                   '显著滞后列表': '、'.join(str(k) for k in sig_lags[:30]) if sig_lags else '无',\n                   '最强峰值_滞后': int(peaks[0][0]) if peaks else None,\n                   '最强峰值_ACF值': _fmt(peaks[0][1]) if peaks else None,\n                   '候选周期': int(period_hint) if period_hint else None,\n                   'Ljung-Box_Q统计量': _fmt(lb_q), 'Ljung-Box_p值': _fmt(lb_p, 6)})\n    for k in range(1, len(a)):\n        report['ACF_滞后' + str(k)] = _fmt(a[k])\n    if period_hint:\n        acf_concl = ('ACF 在滞后 k=' + str(period_hint) + ' 及倍数处出现显著峰值（r='\n                     + '{:.3f}'.format(a[period_hint]) + ' > ' + '{:.3f}'.format(ci)\n                     + '），呈现周期衰减形态，提示序列存在周期约为 ' + str(period_hint) + ' 的周期性成分。')\n    elif white:\n        acf_concl = 'ACF 各滞后均落入 95% 置信界限内，序列近似白噪声，未检测到显著自相关或周期性。'\n    elif slow:\n        acf_concl = 'ACF 衰减缓慢（r(1)=' + '{:.3f}'.format(a[1]) + '），序列存在强趋势/非平稳特征，建议先差分或去趋势后再做周期检验。'\n    else:\n        acf_concl = 'ACF 快速衰减至置信界限内，序列呈平稳特征，未见规则周期峰值。'\n    report.update({'自相关特征': ('周期衰减（候选周期 ' + str(period_hint) + '）' if period_hint else ('白噪声' if white else '非平稳慢衰减' if slow else '平稳无周期')),\n                   '结论': acf_concl + (' Ljung-Box Q=' + '{:.2f}'.format(lb_q) + '（p=' + '{:.2e}'.format(lb_p) + '），序列存在显著自相关。' if lb_p < alpha else ' Ljung-Box 检验未拒绝白噪声假设。')})\n    image = _png(fig)\n\n# ═══════════════ 4. FFT / 功率谱分析 ═══════════════\nelif method == 'FFT功率谱分析':\n    from scipy.signal import find_peaks\n    # ── 智能列识别：数值列留空时自动判断 ──\n    _time_cands = _auto_time_columns(df)\n    _num_cands = _auto_num_columns(df, exclude=_time_cands)\n    if not value_column:\n        value_column = _pick_default_numeric(df, _num_cands)\n        if value_column is None:\n            raise RuntimeError('未找到可用的数值列（请检查数据是否为数值型，或手动指定数值列）')\n    _check_col(df, value_column, '数值列')\n    if sampling_interval <= 0:\n        raise RuntimeError('采样间隔必须 > 0')\n    s, n_miss = _clean_series(df, value_column)\n    arr = s.to_numpy()\n    n = len(arr)\n    if n < 8:\n        raise RuntimeError('清洗后有效样本不足 8 个')\n    y = arr - float(arr.mean())\n    fft = np.fft.rfft(y)\n    freq = np.fft.rfftfreq(n, d=sampling_interval)\n    amp = np.abs(fft) * 2.0 / n\n    amp[0] = 0.0\n    power = (np.abs(fft) ** 2) / n\n    power[0] = 0.0\n    pk_idx, _ = find_peaks(amp, distance=max(1, int(n / 40)))\n    pk_idx = [i for i in pk_idx if freq[i] > 0]\n    pk_sorted = sorted(pk_idx, key=lambda i: amp[i], reverse=True)[:max(top_peaks, 1)]\n    if not pk_sorted:\n        raise RuntimeError('频谱中未检测到明显主峰（序列可能近似白噪声），建议改用 ACF 或 STL 方法')\n    total_p = float(power[1:].sum()) or 1e-12\n    fny = 0.5 / sampling_interval\n    fig, axes = plt.subplots(2, 1, figsize=(10, 6.6), sharex=True)\n    ax1, ax2 = axes\n    ax1.plot(freq, amp, color=NAVY, linewidth=1.6, zorder=3)\n    ax1.scatter([freq[i] for i in pk_sorted], [amp[i] for i in pk_sorted],\n                color=RED, s=32, zorder=4, edgecolors='#333333', linewidth=0.4)\n    for i in pk_sorted[:3]:\n        ax1.annotate('T={:.2f}'.format(1.0 / freq[i]), xy=(freq[i], amp[i]),\n                     xytext=(0, 8), textcoords='offset points', ha='center', fontsize=8.5, color=RED)\n    ax1.set_title('FFT 幅值谱：{}'.format(value_column), fontsize=14, fontweight='bold', pad=10)\n    ax1.set_ylabel('幅值', fontsize=11, color='#333333')\n    _style(ax1)\n    pdb = 10.0 * np.log10(power + 1e-12)\n    ax2.plot(freq, pdb, color=GREEN, linewidth=1.4, zorder=3)\n    ax2.axvline(fny, color=BROWN, linestyle=':', linewidth=0.8, zorder=2)\n    ax2.set_xlabel('频率（单位：1/采样间隔 ' + '{:g}'.format(sampling_interval) + '）', fontsize=11, color='#333333')\n    ax2.set_ylabel('功率谱密度 (dB)', fontsize=11, color='#333333')\n    _style(ax2)\n    plt.tight_layout()\n    report.update({'样本量': int(n), '缺失值插值数': int(n_miss), '采样间隔': _fmt(sampling_interval),\n                   '列识别_数值列候选': ('、'.join(map(str, _num_cands)) if _num_cands else '未识别到'),\n                   '列识别_已用数值列': str(value_column),\n                   '奈奎斯特频率': _fmt(fny), '主峰数': int(len(pk_sorted))})\n    for rank, i in enumerate(pk_sorted, 1):\n        report.update({\n            '主峰' + str(rank) + '_频率': _fmt(freq[i], 6),\n            '主峰' + str(rank) + '_周期': _fmt(1.0 / freq[i], 4),\n            '主峰' + str(rank) + '_幅值': _fmt(amp[i]),\n            '主峰' + str(rank) + '_功率占比%': _fmt(100.0 * power[i] / total_p, 2),\n        })\n    i0 = pk_sorted[0]\n    pct0 = 100.0 * power[i0] / total_p\n    if len(pk_sorted) >= 2:\n        i1 = pk_sorted[1]\n        fft_concl = ('功率谱显示最强周期成分 T=' + '{:.4g}'.format(1.0 / freq[i0])\n                     + '（频率 f=' + '{:.4g}'.format(freq[i0]) + '，幅值 '\n                     + '{:.4g}'.format(amp[i0]) + '，占非直流谱能量 {:.1f}%'.format(pct0)\n                     + '），次强周期 T=' + '{:.4g}'.format(1.0 / freq[i1])\n                     + '（幅值 ' + '{:.4g}'.format(amp[i1]) + '）。')\n    else:\n        fft_concl = ('功率谱显示最强周期成分 T=' + '{:.4g}'.format(1.0 / freq[i0])\n                     + '（频率 f=' + '{:.4g}'.format(freq[i0]) + '，幅值 '\n                     + '{:.4g}'.format(amp[i0]) + '，占非直流谱能量 {:.1f}%'.format(pct0) + '）。')\n    report.update({'最强周期': _fmt(1.0 / freq[i0], 4), '最强周期_功率占比%': _fmt(pct0, 2), '结论': fft_concl})\n    image = _png(fig)\n\n# ═══════════════ 5. STL 季节分解 ═══════════════\nelif method == 'STL季节分解':\n    from statsmodels.tsa.seasonal import STL\n    # ── 智能列识别：数值列/时间列留空时自动判断 ──\n    _time_cands = _auto_time_columns(df)\n    _num_cands = _auto_num_columns(df, exclude=_time_cands)\n    if not time_column:\n        time_column = _time_cands[0] if _time_cands else ''\n    if not value_column:\n        value_column = _pick_default_numeric(df, _num_cands)\n        if value_column is None:\n            raise RuntimeError('未找到可用的数值列（请检查数据是否为数值型，或手动指定数值列）')\n    _check_col(df, value_column, '数值列')\n    if period < 2:\n        raise RuntimeError('季节周期 period 必须为 ≥ 2 的整数')\n    s, n_miss = _clean_series(df, value_column)\n    arr = s.to_numpy()\n    n = len(arr)\n    if n < 2 * period + 1:\n        raise RuntimeError('样本量不足：STL 要求 n > 2×周期（当前 n=' + str(n) + '，周期 P=' + str(period)\n                           + '）。请减小周期或提供更长序列')\n    sw = None if seasonal_window in (None, 'None', '') else int(seasonal_window)\n    tw = None if trend_window in (None, 'None', '') else int(trend_window)\n    # statsmodels STL 要求 seasonal/trend/low_pass 均为奇数 ≥3：自动窗口可能算出偶数（如 1.5×12=18），手动补奇数化\n    if sw is not None:\n        sw = sw if sw % 2 == 1 else sw + 1\n    if tw is not None:\n        tw = tw if tw % 2 == 1 else tw + 1\n    if sw is None:\n        sw = int(np.ceil(1.5 * period))\n        sw = max(sw, 7)\n        sw = sw if sw % 2 == 1 else sw + 1\n    if tw is None:\n        tw = int(np.ceil(1.5 * period / (1 - 1.5 / sw)))\n        tw = max(tw, 3)\n        tw = tw if tw % 2 == 1 else tw + 1\n    lp = max(period, 7)\n    lp = lp if lp % 2 == 1 else lp + 1\n    res = STL(arr, period=period, robust=robust, seasonal=sw, trend=tw, low_pass=lp).fit()\n    tr, seas, resi = res.trend, res.seasonal, res.resid\n    var_res = float(resi.var()) or 1e-12\n    Ft = max(0.0, 1.0 - var_res / float((resi + tr).var()))\n    Fs = max(0.0, 1.0 - var_res / float((resi + seas).var()))\n    season_amp = float(seas.max() - seas.min())\n    phase_peak = int(np.argmax(seas) % period)\n    phase_trough = int(np.argmin(seas) % period)\n    resid_mean = float(resi.mean())\n    resid_sd = float(resi.std(ddof=1))\n    shapiro_p = float(stats.shapiro(resi).pvalue) if n <= 5000 else None\n    x, is_time = _x_axis(df, time_column)\n    fig, axes = plt.subplots(4, 1, figsize=(12, 9), sharex=True)\n    fig.suptitle('STL 季节分解：{}（周期 P={}）'.format(value_column, period), fontsize=14, fontweight='bold', y=0.998)\n    panels = [(arr, NAVY, '观测值 Observed', 1.5), (tr, RED, '趋势 Trend', 2.0),\n              (seas, GREEN, '季节 Seasonal', 1.6), (resi, '#888888', '残差 Residual', 1.0)]\n    for ax_, (d_, c_, lb_, lw_) in zip(axes, panels):\n        ax_.plot(x, d_, color=c_, linewidth=lw_)\n        ax_.set_ylabel(lb_, fontsize=9.5, color='#333333')\n        _style(ax_)\n    axes[2].text(0.985, 0.92, '季节幅度 = {:.4g}'.format(season_amp), transform=axes[2].transAxes,\n                 ha='right', va='top', fontsize=9, color='#222222',\n                 bbox=dict(facecolor='white', edgecolor='#999999', alpha=0.9, boxstyle='round,pad=0.3'))\n    axes[3].text(0.985, 0.92, '残差 SD = {:.4g}'.format(resid_sd), transform=axes[3].transAxes,\n                 ha='right', va='top', fontsize=9, color='#222222',\n                 bbox=dict(facecolor='white', edgecolor='#999999', alpha=0.9, boxstyle='round,pad=0.3'))\n    axes[-1].set_xlabel('时间' if is_time else '序号 t', fontsize=11, color='#333333')\n    if is_time:\n        plt.setp(axes[-1].get_xticklabels(), rotation=30, ha='right')\n    plt.tight_layout(rect=[0, 0, 1, 0.99])\n    fs_label = '强季节（Fs>0.64）' if Fs > 0.64 else ('中等季节（0.07<Fs≤0.64）' if Fs > 0.07 else '弱季节（Fs≤0.07）')\n    ft_label = '强趋势' if Ft > 0.64 else ('中等趋势' if Ft > 0.07 else '弱趋势')\n    report.update({\n        '样本量': int(n), '缺失值插值数': int(n_miss), '季节周期P': int(period),\n        '列识别_数值列候选': ('、'.join(map(str, _num_cands)) if _num_cands else '未识别到'),\n        '列识别_已用数值列': str(value_column),\n        '列识别_已用时间列': (str(time_column) if time_column else '（未用，x轴按序号）'),\n        '季节强度Fs': _fmt(Fs), '趋势强度Ft': _fmt(Ft),\n        '季节强度_评级': fs_label, '趋势强度_评级': ft_label,\n        '季节幅度(峰谷差)': _fmt(season_amp), '季节峰_相位(0~P-1)': int(phase_peak),\n        '季节谷_相位(0~P-1)': int(phase_trough),\n        '残差_均值': _fmt(resid_mean), '残差_标准差': _fmt(resid_sd),\n        '残差Shapiro-Wilk_p值': _fmt(shapiro_p, 6) if shapiro_p is not None else None,\n        '结论': ('STL 分解（周期 P=' + str(period) + '）显示：季节强度 Fs=' + '{:.3f}'.format(Fs)\n                + '（' + fs_label + '），趋势强度 Ft=' + '{:.3f}'.format(Ft) + '（' + ft_label\n                + '）；季节项振幅 ' + '{:.4g}'.format(season_amp)\n                + '，周期内峰位于相位 ' + str(phase_peak) + '、谷位于相位 ' + str(phase_trough)\n                + '；残差均值 ' + '{:.3g}'.format(resid_mean) + '、标准差 ' + '{:.4g}'.format(resid_sd)\n                + '。' + ('分解后残差接近正态（Shapiro p=' + '{:.3f}'.format(shapiro_p) + '），模型充分捕捉了趋势与季节成分。' if shapiro_p is not None and shapiro_p >= alpha else '') + ''),\n    })\n    image = _png(fig)\n\nelse:\n    raise RuntimeError('未知检验方法：' + str(method))\n\n# 原样透传数据给下游（可接数据导出插件）\nif isinstance(data, str):\n    out_data = data\nelif isinstance(data, bytes):\n    out_data = data.decode('utf-8-sig')\nelse:\n    out_data = data.to_csv(index=False)\n\n# report 压平成「指标,值」两列 CSV（csv 模块转义，Excel 可直接打开）\n_report_rows = []\n\n\ndef _flatten_report(obj, prefix):\n    if isinstance(obj, dict):\n        for _k, _v in obj.items():\n            _flatten_report(_v, prefix + str(_k) + '｜' if prefix else str(_k))\n    elif isinstance(obj, list):\n        for _i, _v in enumerate(obj):\n            _flatten_report(_v, prefix + '[' + str(_i) + ']')\n    else:\n        _val = '' if obj is None else str(obj)\n        _report_rows.append((prefix, _val.replace('\\n', ' ').replace('\\r', ' ')))\n\n\n_flatten_report(report, '')\n_buf = _io.StringIO()\n_writer = _csv.writer(_buf, lineterminator='\\n')\n_writer.writerow(['指标', '值'])\nfor _r in _report_rows:\n    _writer.writerow([_r[0], _r[1]])\nreport_csv = _buf.getvalue()\n\n# 报告正文打印到运行日志（右侧面板「运行日志」完整显示，界面只显示前5行）\n\n\ndef _pick(keys_sub):\n    return '；'.join(str(_k) + '=' + str(_v) for _k, _v in report.items()\n                     if any(_s in str(_k) for _s in keys_sub) and _k not in ('结论', '检验方法') and _v is not None)\n\n\nprint('【' + str(report['检验方法']) + '】 ' + str(value_column))\nprint('样本：' + _pick(['样本量', '均值', '标准差', '组数', '最大滞后', '周期', '主峰数']))\nprint('关键：' + _pick(['趋势', '候选周期', '最强周期', '季节强度', '趋势强度', 'ANOVA_F', '最强峰值', '主峰1_周期']))\nprint('检验：' + _pick(['Ljung', '显著', 'p值', '功率占比']))\nprint('结论：' + str(report.get('结论', '')))\n\nreturn {'report': report, 'report_csv': report_csv, 'image': image, 'data': out_data}\n",
+  "icon": "📈",
+  "name": "周期检验（时序·ACF·FFT·STL）",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "method",
+      "hint": "时序图看整体形态；ACF/FFT找周期；STL做季节分解；分组统计按类别比较均值",
+      "kind": "enum",
+      "label": "检验方法",
+      "default": "时序图",
+      "options": [
+        "时序图",
+        "分组统计",
+        "自相关函数ACF",
+        "FFT功率谱分析",
+        "STL季节分解"
+      ]
+    },
+    {
+      "key": "value_column",
+      "hint": "被检验的数值序列列；留空时插件自动识别所有数值列并选取信息量最大的一列（报告列出候选）",
+      "kind": "column",
+      "label": "数值列（留空=自动识别）",
+      "default": ""
+    },
+    {
+      "key": "time_column",
+      "hint": "时序图/STL的x轴时间列；留空时插件自动识别文件中的时间列，未识别到则用序号",
+      "kind": "column",
+      "label": "时间列（留空=自动识别）",
+      "default": "",
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "时序图",
+          "STL季节分解"
+        ]
+      }
+    },
+    {
+      "key": "segment_index",
+      "hint": "直接下拉选择要查看的时间段（默认全部）：选中后只绘制该段，标题/报告标注段区间；段数以报告「分段数」为准，超出的段号会自动友好提示",
+      "kind": "enum",
+      "label": "查看时间段",
+      "default": "全部",
+      "options": [
+        "全部",
+        "第1段",
+        "第2段",
+        "第3段",
+        "第4段",
+        "第5段",
+        "第6段",
+        "第7段",
+        "第8段",
+        "第9段",
+        "第10段",
+        "第11段",
+        "第12段"
+      ],
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "时序图"
+        ]
+      }
+    },
+    {
+      "key": "segment_mode",
+      "hint": "按文件时间跨度把序列划分成时间段（段数适中时图上淡色带+段名，报告附逐段统计；段数过多自动省略标注）：自动分段=让段数落在3~12段、尽量接近8段（如3年→按季度12段、8个月→按月8段、30天→按周4段、10天→按天10段；不会切出几十上百段）；一天内多条记录的数据会自动识别时间分辨率；无时间列时自动失效",
+      "kind": "enum",
+      "label": "时间分段",
+      "default": "自动分段",
+      "options": [
+        "不分段",
+        "自动分段",
+        "按年",
+        "按季度",
+        "按月",
+        "按周",
+        "按天"
+      ],
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "时序图"
+        ]
+      }
+    },
+    {
+      "key": "smooth_window",
+      "hint": "时序图叠加移动平均线（0=不显示；如7/12/30）",
+      "kind": "int",
+      "label": "移动平均窗口",
+      "default": 0,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "时序图"
+        ]
+      }
+    },
+    {
+      "key": "group_column",
+      "hint": "分组统计的分组类别列（如月份/季节）；留空时插件自动识别类别列（2~30类）",
+      "kind": "column",
+      "label": "分组列（留空=自动识别）",
+      "default": "",
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "分组统计"
+        ]
+      }
+    },
+    {
+      "key": "errorbar_type",
+      "hint": "SD描述数据离散；SEM/95%CI用于推断比较",
+      "kind": "enum",
+      "label": "误差棒类型",
+      "default": "标准差SD",
+      "options": [
+        "标准差SD",
+        "标准误SEM",
+        "95%置信区间",
+        "无"
+      ],
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "分组统计"
+        ]
+      }
+    },
+    {
+      "key": "max_lag",
+      "hint": "ACF计算的滞后上限（默认20，自动不超过 n-2）",
+      "kind": "int",
+      "label": "最大滞后阶数",
+      "default": 20,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "自相关函数ACF"
+        ]
+      }
+    },
+    {
+      "key": "sampling_interval",
+      "hint": "FFT频率单位：每个观测点代表的时间长度（如按天=1、按月=1）",
+      "kind": "float",
+      "label": "采样间隔",
+      "default": 1,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "FFT功率谱分析"
+        ]
+      }
+    },
+    {
+      "key": "top_peaks",
+      "hint": "FFT谱中标注并报告的最强峰个数",
+      "kind": "int",
+      "label": "主峰数量",
+      "default": 5,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "FFT功率谱分析"
+        ]
+      }
+    },
+    {
+      "key": "period",
+      "hint": "STL季节周期长度（月数据=12、周数据=7、小时数据=24、季度=4）",
+      "kind": "int",
+      "label": "季节周期P",
+      "default": 12,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "STL季节分解"
+        ]
+      }
+    },
+    {
+      "key": "robust",
+      "hint": "STL鲁棒拟合，对异常值不敏感",
+      "kind": "bool",
+      "label": "鲁棒迭代",
+      "default": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "STL季节分解"
+        ]
+      }
+    },
+    {
+      "key": "seasonal_window",
+      "hint": "STL季节项平滑窗口（None=自动，须为奇数）",
+      "kind": "nullable-int",
+      "label": "季节平滑窗口",
+      "default": null,
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "STL季节分解"
+        ]
+      }
+    },
+    {
+      "key": "trend_window",
+      "hint": "STL趋势项平滑窗口（None=自动，须为奇数）",
+      "kind": "nullable-int",
+      "label": "趋势平滑窗口",
+      "default": null,
+      "advanced": true,
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "STL季节分解"
+        ]
+      }
+    }
+  ],
+  "source": "community",
+  "outputs": [
+    {
+      "name": "report",
+      "type": "JSON",
+      "direction": "out"
+    },
+    {
+      "name": "report_csv",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "image",
+      "type": "PNG",
+      "direction": "out"
+    },
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    }
+  ],
+  "version": "1.4.1",
+  "category": "统计分析",
+  "description": "周期检验四合一：时序图（智能识别数值/时间列与时间分辨率，按文件跨度自动分段、下拉直接选段查看，大数据自动聚合、段数过多自动省略标注，含移动平均/趋势判断）、分组统计（智能识别分组列，柱状图+误差棒+ANOVA）、自相关函数ACF（含Ljung-Box检验与候选周期识别）、FFT功率谱分析（主峰周期提取）、STL季节分解（季节/趋势强度）。数值列/时间列/分组列均支持留空自动识别（报告列出候选清单）。全部按顶刊规范出图（300DPI、Nature风格配色），输出平铺中文检验报告，可直接渲染论文级表格或导出Excel。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "五种方法均支持智能列识别（数值列留空自动判断）并输出候选清单（300DPI顶刊风格：去上右边框/#CCCCCC虚线网格/#1F3A93主色/微软雅黑）",
+    "智能列识别：数值列/时间列/分组列留空自动判断（排除ID/编码列，报告输出候选清单与所选列）",
+    "时序图按文件时间跨度自动分段（3~12段），下拉「查看时间段」直接选段，无需输入日期",
+    "段数过多自动省略标注（不糊图）；自动识别数据时间分辨率（如一天内多条记录）并在报告中注明",
+    "大数据自动聚合降采样（>4000点按天/周/月聚合并注明），避免画面拥挤",
+    "ACF自动识别候选周期并附Ljung-Box检验；FFT自动提取前N个主峰周期与功率占比",
+    "STL输出季节强度Fs与趋势强度Ft（Hyndman标准评级）；分组统计附ANOVA显著性标注",
+    "缺失/非数字脏数据自动插值清洗并在报告中注明"
+  ]
+}
