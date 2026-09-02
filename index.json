@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-01T15:01:21.297Z",
-  "count": 17,
+  "updated": "2026-09-02T13:30:02.350Z",
+  "count": 18,
   "plugins": [
     {
       "id": "csv-feature-distribution",
@@ -172,6 +172,16 @@
       "version": "2.0.2",
       "author": "ModMata 官方",
       "updated": "2026-09-01"
+    },
+    {
+      "id": "table-side-merge",
+      "name": "表并列合并",
+      "icon": "table-2",
+      "category": "数据处理",
+      "description": "固定使用左连接：完整保留主表，根据双方选择的关联列，把附表资料补到主表右侧，并输出一张容易看懂的合并检查报告。",
+      "version": "1.0.0",
+      "author": "社区用户",
+      "updated": "2026-09-02"
     }
   ]
 }
