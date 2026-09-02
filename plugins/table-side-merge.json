@@ -1,0 +1,60 @@
+{
+  "id": "table-side-merge",
+  "code": "# 表并列合并：固定左连接，完整保留主表，并输出可视化检查报告\nimport io\nimport base64\nimport math\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfrom matplotlib.patches import FancyBboxPatch\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial Unicode MS', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'figure.facecolor': 'white',\n    'savefig.facecolor': 'white',\n})\n\n_main_keys = {{main_keys}}\n_aux_keys = {{aux_keys}}\n\n\ndef _to_frame(value, label):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError(label + '的 CSV 编码无法识别')\n    if isinstance(value, str):\n        try:\n            return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n        except Exception as exc:\n            raise RuntimeError(label + '无法读取：' + str(exc))\n    raise RuntimeError(label + '必须是 CSV 数据')\n\n\ndef _normal_key(value):\n    if pd.isna(value):\n        return pd.NA\n    if isinstance(value, bool):\n        return str(value)\n    if isinstance(value, int):\n        return str(value)\n    if isinstance(value, float) and math.isfinite(value) and value.is_integer():\n        return str(int(value))\n    return str(value).strip()\n\n\ndef _key_text(values):\n    return ' / '.join('空值' if pd.isna(value) else str(value) for value in values)\n\n\nif 主表 is None:\n    raise RuntimeError('请连接并先运行主表的数据导入插件')\nif 附表 is None:\n    raise RuntimeError('请连接并先运行附表的数据导入插件')\n\n_main = _to_frame(主表, '主表')\n_aux = _to_frame(附表, '附表')\n\nif not isinstance(_main_keys, (list, tuple)) or len(_main_keys) == 0:\n    raise RuntimeError('请至少选择一个主表关联列')\nif not isinstance(_aux_keys, (list, tuple)) or len(_aux_keys) == 0:\n    raise RuntimeError('请至少选择一个附表关联列')\nif len(_main_keys) != len(_aux_keys):\n    raise RuntimeError('主表选择了 %d 个关联列，附表选择了 %d 个；请让两边数量一致' % (len(_main_keys), len(_aux_keys)))\n\n_missing_main = [str(column) for column in _main_keys if column not in _main.columns]\n_missing_aux = [str(column) for column in _aux_keys if column not in _aux.columns]\nif _missing_main:\n    raise RuntimeError('主表中找不到关联列：' + '、'.join(_missing_main))\nif _missing_aux:\n    raise RuntimeError('附表中找不到关联列：' + '、'.join(_missing_aux))\n\n_main_work = _main.copy()\n_aux_work = _aux.copy()\n_temp_keys = []\nfor _index, (_main_key, _aux_key) in enumerate(zip(_main_keys, _aux_keys)):\n    _temp = '__modmata_join_key_%d__' % _index\n    _temp_keys.append(_temp)\n    _main_work[_temp] = _main_work[_main_key].map(_normal_key).astype('string')\n    _aux_work[_temp] = _aux_work[_aux_key].map(_normal_key).astype('string')\n\n# 用主表原始列名为准；附表里与主表重名的非关联列自动增加“（附表）”。\n_aux_key_set = set(_aux_keys)\n_rename_aux = {}\n_taken_names = set(str(column) for column in _main.columns)\nfor _column in _aux.columns:\n    if _column in _aux_key_set:\n        continue\n    _name = str(_column)\n    if _name in _taken_names:\n        _base = _name + '（附表）'\n        _new_name = _base\n        _number = 2\n        while _new_name in _taken_names:\n            _new_name = _base + str(_number)\n            _number += 1\n        _rename_aux[_column] = _new_name\n        _taken_names.add(_new_name)\n    else:\n        _taken_names.add(_name)\n_aux_work = _aux_work.rename(columns=_rename_aux)\n\n# 关联列只保留主表版本，避免结果里出现两套含义相同的列。\n_aux_payload_columns = [column for column in _aux_work.columns if column not in _aux_key_set]\n_aux_work = _aux_work[_aux_payload_columns]\n\n_valid_aux = _aux_work[_temp_keys].notna().all(axis=1)\n_aux_valid_keys = _aux_work.loc[_valid_aux, _temp_keys]\n_aux_key_tuples = set(map(tuple, _aux_valid_keys.astype(object).values.tolist()))\n\n_valid_main = _main_work[_temp_keys].notna().all(axis=1)\n_main_tuples = list(map(tuple, _main_work[_temp_keys].astype(object).values.tolist()))\n_matched_mask = pd.Series([\n    bool(_valid_main.iloc[_i]) and _main_tuples[_i] in _aux_key_tuples\n    for _i in range(len(_main_work))\n], index=_main_work.index)\n_matched_rows = int(_matched_mask.sum())\n_unmatched_rows = int(len(_main_work) - _matched_rows)\n_match_rate = 0.0 if len(_main_work) == 0 else _matched_rows / len(_main_work)\n\n_duplicate_mask = _aux_work.duplicated(subset=_temp_keys, keep=False) & _valid_aux\n_duplicate_rows = int(_duplicate_mask.sum())\n_duplicate_groups_df = _aux_work.loc[_duplicate_mask, _temp_keys].value_counts().reset_index(name='次数')\n_duplicate_groups = int(len(_duplicate_groups_df))\n\n_merged = pd.merge(\n    _main_work,\n    _aux_work,\n    how='left',\n    on=_temp_keys,\n    sort=False,\n    copy=False,\n)\n_merged = _merged.drop(columns=_temp_keys)\n_added_columns = int(len(_merged.columns) - len(_main.columns))\n\n# 报告示例：最多展示 5 个未匹配关联内容和 5 个附表重复关联内容。\n_unmatched_examples = []\nfor _idx in _main_work.index[~_matched_mask][:5]:\n    _unmatched_examples.append(_key_text([_main.loc[_idx, column] for column in _main_keys]))\n_duplicate_examples = []\nfor _, _row in _duplicate_groups_df.head(5).iterrows():\n    _vals = [_row[temp] for temp in _temp_keys]\n    _duplicate_examples.append(_key_text(_vals) + '（%d 次）' % int(_row['次数']))\n\n# 生成给初学者看的合并检查报告图片。\n_NAVY = '#173B63'\n_BLUE = '#3B82F6'\n_GREEN = '#16A34A'\n_YELLOW = '#D97706'\n_RED = '#DC2626'\n_LIGHT_BLUE = '#EFF6FF'\n_LIGHT_GREEN = '#F0FDF4'\n_LIGHT_YELLOW = '#FFFBEB'\n_LIGHT_RED = '#FEF2F2'\n_TEXT = '#1F2937'\n_MUTED = '#6B7280'\n_BORDER = '#D1D5DB'\n\n_fig = plt.figure(figsize=(12, 7.2), dpi=160)\n_ax = _fig.add_axes([0, 0, 1, 1])\n_ax.set_xlim(0, 1)\n_ax.set_ylim(0, 1)\n_ax.axis('off')\n\n\ndef _box(x, y, w, h, face, edge=_BORDER, radius=0.018):\n    patch = FancyBboxPatch((x, y), w, h, boxstyle='round,pad=0.008,rounding_size=' + str(radius), linewidth=1.2, edgecolor=edge, facecolor=face)\n    _ax.add_patch(patch)\n\n\ndef _text(x, y, text, size=11, color=_TEXT, weight='normal', ha='left', va='center'):\n    _ax.text(x, y, text, fontsize=size, color=color, fontweight=weight, ha=ha, va=va)\n\n\n_text(0.05, 0.945, '表并列合并报告', 22, _NAVY, 'bold')\n_text(0.95, 0.945, '左连接 · 完整保留主表', 11, _BLUE, 'bold', 'right')\n_text(0.05, 0.905, '把附表中的资料按关联列补到主表右侧', 10.5, _MUTED)\n\n_cards = [\n    ('主表', len(_main), len(_main.columns), _LIGHT_BLUE, _BLUE),\n    ('附表', len(_aux), len(_aux.columns), '#F5F3FF', '#7C3AED'),\n    ('合并结果', len(_merged), len(_merged.columns), _LIGHT_GREEN, _GREEN),\n]\nfor _i, (_label, _rows, _cols, _face, _color) in enumerate(_cards):\n    _x = 0.05 + _i * 0.31\n    _box(_x, 0.76, 0.28, 0.105, _face, _color)\n    _text(_x + 0.02, 0.837, _label, 11, _color, 'bold')\n    _text(_x + 0.02, 0.795, '%d 行 × %d 列' % (_rows, _cols), 18, _TEXT, 'bold')\n\n_box(0.05, 0.615, 0.90, 0.105, 'white')\n_text(0.07, 0.690, '本次关联列', 11, _NAVY, 'bold')\n_key_pairs = ['%s  对应  %s' % (str(a), str(b)) for a, b in zip(_main_keys, _aux_keys)]\n_pair_text = '    '.join(_key_pairs)\nif len(_pair_text) > 90:\n    _pair_text = '\\n'.join(_key_pairs)\n_text(0.07, 0.645, _pair_text, 12, _TEXT, 'bold')\n\n_box(0.05, 0.43, 0.90, 0.145, 'white')\n_text(0.07, 0.545, '匹配情况', 11, _NAVY, 'bold')\n_bar_x, _bar_y, _bar_w, _bar_h = 0.07, 0.485, 0.58, 0.035\n_ax.add_patch(FancyBboxPatch((_bar_x, _bar_y), _bar_w, _bar_h, boxstyle='round,pad=0,rounding_size=0.015', linewidth=0, facecolor='#E5E7EB'))\n_ax.add_patch(FancyBboxPatch((_bar_x, _bar_y), _bar_w * _match_rate, _bar_h, boxstyle='round,pad=0,rounding_size=0.015', linewidth=0, facecolor=_GREEN))\n_text(0.68, 0.505, '成功匹配 %d 行（%.1f%%）' % (_matched_rows, _match_rate * 100), 11.5, _GREEN, 'bold')\n_text(0.68, 0.468, '未匹配 %d 行' % _unmatched_rows, 10.5, _YELLOW if _unmatched_rows else _MUTED)\n_text(0.07, 0.452, '从附表新增 %d 列' % _added_columns, 10, _MUTED)\n\n_has_duplicate_risk = _duplicate_groups > 0\n_has_row_growth = len(_merged) > len(_main)\nif _has_duplicate_risk:\n    _status_face, _status_edge, _status_color = _LIGHT_RED, _RED, _RED\n    _status_title = '需要检查：附表中有重复的关联内容'\n    _status_body = '发现 %d 组重复、涉及 %d 行；合并结果可能从一条主表记录变成多行。' % (_duplicate_groups, _duplicate_rows)\nelif _unmatched_rows > 0:\n    _status_face, _status_edge, _status_color = _LIGHT_YELLOW, _YELLOW, _YELLOW\n    _status_title = '基本完成：有部分主表记录没有找到附表资料'\n    _status_body = '这些主表记录仍然保留，附表补充的单元格会留空。'\nelse:\n    _status_face, _status_edge, _status_color = _LIGHT_GREEN, _GREEN, _GREEN\n    _status_title = '合并正常：主表记录全部找到附表资料'\n    _status_body = '没有发现未匹配记录，也没有发现附表关联内容重复。'\n_box(0.05, 0.285, 0.90, 0.105, _status_face, _status_edge)\n_text(0.07, 0.357, _status_title, 12, _status_color, 'bold')\n_text(0.07, 0.317, _status_body, 10.5, _TEXT)\n\n_box(0.05, 0.075, 0.435, 0.17, 'white')\n_text(0.07, 0.218, '未匹配示例', 11, _NAVY, 'bold')\nif _unmatched_examples:\n    for _i, _value in enumerate(_unmatched_examples):\n        _text(0.07, 0.185 - _i * 0.026, '• ' + _value, 9.5, _TEXT)\nelse:\n    _text(0.07, 0.16, '正常：没有未匹配记录', 10.5, _GREEN, 'bold')\n\n_box(0.515, 0.075, 0.435, 0.17, 'white')\n_text(0.535, 0.218, '附表重复关联内容', 11, _NAVY, 'bold')\nif _duplicate_examples:\n    for _i, _value in enumerate(_duplicate_examples):\n        _text(0.535, 0.185 - _i * 0.026, '• ' + _value, 9.5, _RED if _i == 0 else _TEXT)\nelse:\n    _text(0.535, 0.16, '正常：没有发现重复', 10.5, _GREEN, 'bold')\n\n_footer = '提示：未匹配不会删除主表记录；附表重复可能让合并结果行数增加。'\nif _has_row_growth:\n    _footer += ' 本次结果比主表多 %d 行。' % (len(_merged) - len(_main))\n_text(0.05, 0.035, _footer, 9.2, _MUTED)\n\n_buffer = io.BytesIO()\n_fig.savefig(_buffer, format='png', dpi=200, facecolor='white', bbox_inches='tight')\nplt.close(_fig)\nreport = 'data:image/png;base64,' + base64.b64encode(_buffer.getvalue()).decode('ascii')\n\nreturn {'CSV': _merged, 'report': report}",
+  "icon": "table-2",
+  "name": "表并列合并",
+  "inputs": [
+    {
+      "name": "主表",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    },
+    {
+      "name": "附表",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "main_keys",
+      "hint": "从主表中选择用来对号的列；可同时选择多列",
+      "kind": "columns",
+      "input": "主表",
+      "label": "主表关联列（可多选）",
+      "default": []
+    },
+    {
+      "key": "aux_keys",
+      "hint": "按相同顺序选择附表中的对应列；选择数量必须与主表一致",
+      "kind": "columns",
+      "input": "附表",
+      "label": "附表关联列（可多选）",
+      "default": []
+    }
+  ],
+  "source": "user-created",
+  "outputs": [
+    {
+      "name": "CSV",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "report",
+      "type": "Image",
+      "direction": "out"
+    }
+  ],
+  "version": "1.0.0",
+  "category": "数据处理",
+  "description": "固定使用左连接：完整保留主表，根据双方选择的关联列，把附表资料补到主表右侧，并输出一张容易看懂的合并检查报告。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "双 CSV 输入：主表与附表",
+    "主表和附表可分别多选关联列",
+    "输出合并后的 CSV 与可视化检查报告"
+  ]
+}
