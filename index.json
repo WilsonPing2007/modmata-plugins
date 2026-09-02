@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-02T14:48:47.905Z",
+  "updated": "2026-09-02T15:01:01.380Z",
   "count": 18,
   "plugins": [
     {
@@ -108,10 +108,10 @@
       "name": "数据导入",
       "icon": "download",
       "category": "数据处理",
-      "description": "选择一个 CSV 或 XLSX 数据文件，输出 CSV 格式的数据文本（自动处理中文编码，XLSX 自动转 CSV）。",
-      "version": "1.0.0",
-      "author": "ModMata 官方",
-      "updated": "2026-09-01"
+      "description": "读取 CSV/XLSX（自动识别编码与分隔符），自动生成数据体检图（重复行、空行、缺失格子、全空列、列名问题），并自动删除完全相同的重复行，输出干净 CSV。",
+      "version": "1.1.0",
+      "author": "社区用户",
+      "updated": "2026-09-02"
     },
     {
       "id": "linear-regression",
