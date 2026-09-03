@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T07:02:36.286Z",
-  "count": 18,
+  "updated": "2026-09-03T08:11:08.492Z",
+  "count": 19,
   "plugins": [
     {
       "id": "csv-feature-distribution",
@@ -171,6 +171,16 @@
       "description": "生成泊松样本并绘制 300 DPI 频率直方图、样本平滑 KDE 与理论泊松 PMF 对比图。",
       "version": "2.0.2",
       "author": "Modmata",
+      "updated": "2026-09-03"
+    },
+    {
+      "id": "row-filter",
+      "name": "行筛选",
+      "icon": "filter",
+      "category": "数据处理",
+      "description": "按删除行条件筛选数据：条件为真的行被删除（典型：去掉销量≤0、剔除异常时间段）。数值列自动按数字比较，文本列支持「包含」，可直接写 == 空 / != 空 判断空值。输出保留行 + 筛选报告。",
+      "version": "1.0.0",
+      "author": "Wilson.",
       "updated": "2026-09-03"
     },
     {
