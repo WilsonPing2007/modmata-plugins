@@ -6,7 +6,9 @@ const path = require('path')
 const PLUGINS_DIR = path.join(__dirname, '..', 'plugins')
 const OUT = path.join(__dirname, '..', 'index.json')
 
-const AUTHORS = { default: 'ModMata 官方' }
+// 署名规则：作者 = 上传插件的用户昵称；官方/本人上传 → Modmata。
+// 插件 json 可带 author 字段（第三方通道手动发布时署名自己），缺省 = Modmata。
+const AUTHORS = { default: 'Modmata' }
 
 function main() {
   const files = fs.readdirSync(PLUGINS_DIR).filter((f) => f.endsWith('.json'))
@@ -22,7 +24,7 @@ function main() {
         category: t.category || '其他',
         description: (t.description || '').slice(0, 200),
         version: t.version || '0.0.0',
-        author: AUTHORS.default,
+        author: t.author && String(t.author).trim() ? String(t.author).trim() : AUTHORS.default,
         updated: new Date().toISOString().slice(0, 10),
       })
     } catch (e) {
