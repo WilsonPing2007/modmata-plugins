@@ -1,8 +1,18 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T14:22:09.525Z",
-  "count": 22,
+  "updated": "2026-09-03T16:04:39.669Z",
+  "count": 23,
   "plugins": [
+    {
+      "id": "ai-visualization",
+      "name": "AI - 可视化",
+      "icon": "sparkles",
+      "category": "预测",
+      "description": "调用软件当前连接的 AI，依据国赛出版级可视化 Skill 处理任意输入数据或文件；输出格式由 AI 按任务决定。",
+      "version": "1.0.0",
+      "author": "Wilson.",
+      "updated": "2026-09-03"
+    },
     {
       "id": "chi2-fisher-tests",
       "name": "分布检验",
