@@ -1,0 +1,50 @@
+{
+  "id": "row-filter",
+  "code": "# 行筛选：删除行条件为真的行；数值列自动按数字比较；文本列支持「包含」；支持中文大白话条件\n# 列编号：按「筛选列」勾选顺序 = a、b、c…\nimport io\nimport ast\nimport re as _re\nimport numpy as np\nimport pandas as pd\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _is_empty(value):\n    if value is None:\n        return True\n    if isinstance(value, float) and pd.isna(value):\n        return True\n    if isinstance(value, str):\n        return value.strip() == ''\n    return False\n\n\nclass _Empty:\n    def __eq__(self, other):\n        return _is_empty(other)\n\n    def __ne__(self, other):\n        return not _is_empty(other)\n\n    def __repr__(self):\n        return '空'\n\n\n_EMPTY_ = _Empty()\n\n\ndef _mod_contains_(value, sub):\n    if _is_empty(value):\n        return False\n    return str(sub) in str(value)\n\n\ndef _pretty(_seg):\n    _s = _seg.replace('_EMPTY_', '空')\n    _s = _re.sub(r\"_mod_contains_\\(([^,]+?),\\s*('[^']*'|\\\"[^\\\"]*\\\")\\)\", r\"\\1 包含 \\2\", _s)\n    return _s\n\n\n_df = _to_frame(data).reset_index(drop=True)\nif _df.empty:\n    raise RuntimeError('原始表是空的，没有行可筛选')\n\n_cols = {{filter_cols}}\nif not isinstance(_cols, list) or not _cols:\n    raise RuntimeError('请先在参数区选择至少一个筛选列（第一个 = a，第二个 = b…）')\nif len(_cols) > 26:\n    raise RuntimeError('最多选择 26 个筛选列（a~z）')\n_column_names = [str(c) for c in _df.columns]\nfor _c in _cols:\n    if _c not in _column_names:\n        raise RuntimeError('筛选列「' + str(_c) + '」不在原始表中')\n\n_raw_cond = {{drop_cond}}\nif not isinstance(_raw_cond, str) or not _raw_cond.strip():\n    raise RuntimeError('请填写删除行条件。示例：a[i] <= 0；b[i] 包含 \\'临时\\'；c[i] in [\\'北京\\']；d[i] == 空；可用 and / or 组合')\n\n_cond = _raw_cond\n_cond = _cond.replace('== 空', '== _EMPTY_').replace('!= 空', '!= _EMPTY_')\n_cond = _cond.replace('==空', '== _EMPTY_').replace('!=空', '!= _EMPTY_')\ndef _contains_repl(_m):\n    return '_mod_contains_(' + _m.group(1) + '[' + _m.group(2) + '], ' + _m.group(3) + ')'\n_cond = _re.sub(r\"([a-z])\\s*\\[\\s*([^\\]]+?)\\s*\\]\\s*包含\\s*('[^']*'|\\\"[^\\\"]*\\\")\", _contains_repl, _cond)\nif '包含' in _cond:\n    raise RuntimeError('「包含」用法示例：a[i] 包含 \\'临时\\'（删掉 a 列文本含“临时”的行）')\n\ntry:\n    _cond_ast = ast.parse(_cond, mode='eval')\nexcept SyntaxError as _err:\n    raise RuntimeError('删除行条件语法有误：' + str(_err) + '（示例：a[i] <= 0 or b[i] 包含 \\'临时\\'）')\n\n_sub_exprs = []\nfor _node in ast.walk(_cond_ast):\n    _is_compare = isinstance(_node, ast.Compare)\n    _is_contains = isinstance(_node, ast.Call) and getattr(_node.func, 'id', '') == '_mod_contains_'\n    if _is_compare or _is_contains:\n        _seg = ast.get_source_segment(_cond, _node)\n        if _seg and _seg not in _sub_exprs:\n            _sub_exprs.append(_seg)\n_sub_exprs = _sub_exprs[:20]\n\n\ndef _typed_column(_series):\n    _series = _series.reset_index(drop=True)\n    _conv = pd.to_numeric(_series, errors='coerce')\n    if _conv.notna().sum() == _series.notna().sum() and _conv.notna().sum() > 0:\n        return _conv.to_numpy(dtype=float)\n    return _series.to_numpy(dtype=object)\n\n\n_aliases = 'abcdefghijklmnopqrstuvwxyz'\n_col_data = {}\nfor _idx, _c in enumerate(_cols):\n    _col_data[_aliases[_idx]] = _typed_column(_df[_c])\n_row_count = len(_df)\n\n\ndef _make_ns(_i):\n    _ns = {'i': _i, '_EMPTY_': _EMPTY_, '_mod_contains_': _mod_contains_}\n    _ns.update(_col_data)\n    return _ns\n\n\n_drop_indexes = []\n_sub_hits = {}\nfor _i in range(_row_count):\n    _ns = _make_ns(_i)\n    try:\n        _hit = bool(eval(_cond, {'__builtins__': {}}, _ns))\n    except Exception as _err:\n        raise RuntimeError('条件在第 ' + str(_i + 1) + ' 行执行失败：' + str(_err) + '（数值列才能用 <、>；文本列请用 包含 或 in）')\n    if _hit:\n        _drop_indexes.append(_i)\n    for _seg in _sub_exprs:\n        try:\n            if bool(eval(_seg, {'__builtins__': {}}, dict(_ns))):\n                _key = _pretty(_seg)\n                _sub_hits[_key] = _sub_hits.get(_key, 0) + 1\n        except Exception:\n            pass\n\n_report = {\n    '原始行数': _row_count,\n    '剩余行数': _row_count - len(_drop_indexes),\n    '删除行数': len(_drop_indexes),\n    '删除条件': _raw_cond,\n    '各条件命中行数': _sub_hits,\n}\n\nreturn {'data': _df.drop(index=_df.index[_drop_indexes]).reset_index(drop=True), 'report': _report}\n",
+  "icon": "filter",
+  "name": "行筛选",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "filter_cols",
+      "hint": "勾选要参与筛选的列：第 1 个勾的列叫 a、第 2 个叫 b…（按勾选顺序编号）",
+      "kind": "columns",
+      "label": "筛选列（按勾选顺序 = a、b…）",
+      "default": []
+    },
+    {
+      "key": "drop_cond",
+      "hint": "条件为真的行会被删除。示例：a[i] <= 0 删掉 a 列≤0 的行；b[i] 包含 '临时' 删文本含“临时”的行；c[i] in ['北京'] 删城市为北京的行；d[i] == 空 删空值行；可用 and / or 组合（如 a[i] <= 0 or b[i] 包含 '临时'）",
+      "kind": "str",
+      "label": "删除行条件",
+      "default": ""
+    }
+  ],
+  "source": "builtin-row-filter",
+  "outputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "report",
+      "type": "JSON",
+      "direction": "out"
+    }
+  ],
+  "version": "1.0.0",
+  "category": "数据处理",
+  "description": "按删除行条件筛选数据：条件为真的行被删除（典型：去掉销量≤0、剔除异常时间段）。数值列自动按数字比较，文本列支持「包含」，可直接写 == 空 / != 空 判断空值。输出保留行 + 筛选报告。",
+  "masterLevel": 1,
+  "masterEvidence": [
+    "支持中文大白话条件（a[i] <= 0、b[i] 包含 '临时'、== 空）"
+  ]
+}
