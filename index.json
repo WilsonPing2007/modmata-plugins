@@ -1,8 +1,18 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T12:13:27.208Z",
-  "count": 20,
+  "updated": "2026-09-03T13:10:24.214Z",
+  "count": 21,
   "plugins": [
+    {
+      "id": "chi2-fisher-tests",
+      "name": "分布检验",
+      "icon": "📋",
+      "category": "统计分析",
+      "description": "读取上游概率分布插件提供的理论分布与已估计参数，对一列样本执行拟合优度检验。连续型分布使用 Kolmogorov-Smirnov 检验，离散型分布使用卡方拟合优度检验，并输出统计量、p 值和中文结论。",
+      "version": "2.0.0",
+      "author": "Lisa",
+      "updated": "2026-09-03"
+    },
     {
       "id": "csv-feature-distribution",
       "name": "特征分布图",
