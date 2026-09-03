@@ -1,0 +1,83 @@
+{
+  "id": "distribution-model-library",
+  "code": "# 概率分布模型库：20 个内置分布 + 目录扩展；输出兼容“分布检验”\nimport copy\nimport json as _json\nimport os\nimport re as _re\nfrom scipy import stats\n\n_selected = {{distribution_name}}\n_overrides_text = {{parameter_overrides}}\n_model_dir = {{folder}}\n\n_builtins = {\n    '正态分布': {'name': '正态分布', 'type': 'continuous', 'scipy_name': 'norm', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'loc=均值，scale=标准差'},\n    '均匀分布': {'name': '均匀分布', 'type': 'continuous', 'scipy_name': 'uniform', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': '区间为 [loc, loc+scale]'},\n    '指数分布': {'name': '指数分布', 'type': 'continuous', 'scipy_name': 'expon', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'scale=1/λ'},\n    '伽马分布': {'name': '伽马分布', 'type': 'continuous', 'scipy_name': 'gamma', 'args': [2], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args[0]=形状参数 a'},\n    '贝塔分布': {'name': '贝塔分布', 'type': 'continuous', 'scipy_name': 'beta', 'args': [2, 2], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args=[a,b]'},\n    '卡方分布': {'name': '卡方分布', 'type': 'continuous', 'scipy_name': 'chi2', 'args': [5], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args[0]=自由度 df'},\n    't分布': {'name': 't分布', 'type': 'continuous', 'scipy_name': 't', 'args': [10], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args[0]=自由度 df'},\n    'F分布': {'name': 'F分布', 'type': 'continuous', 'scipy_name': 'f', 'args': [5, 10], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args=[分子自由度,分母自由度]'},\n    '对数正态分布': {'name': '对数正态分布', 'type': 'continuous', 'scipy_name': 'lognorm', 'args': [1], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args[0]=形状参数 s'},\n    '威布尔分布': {'name': '威布尔分布', 'type': 'continuous', 'scipy_name': 'weibull_min', 'args': [1.5], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'args[0]=形状参数 c'},\n    '逻辑斯蒂分布': {'name': '逻辑斯蒂分布', 'type': 'continuous', 'scipy_name': 'logistic', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'loc=位置，scale=尺度'},\n    '拉普拉斯分布': {'name': '拉普拉斯分布', 'type': 'continuous', 'scipy_name': 'laplace', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'loc=位置，scale=尺度'},\n    '柯西分布': {'name': '柯西分布', 'type': 'continuous', 'scipy_name': 'cauchy', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'loc=位置，scale=尺度'},\n    '瑞利分布': {'name': '瑞利分布', 'type': 'continuous', 'scipy_name': 'rayleigh', 'args': [], 'kwargs': {'loc': 0, 'scale': 1}, 'estimated_param_count': 0, '参数说明': 'loc=位置，scale=尺度'},\n    '泊松分布': {'name': '泊松分布', 'type': 'discrete', 'scipy_name': 'poisson', 'args': [], 'kwargs': {'mu': 1}, 'estimated_param_count': 0, '参数说明': 'mu=事件平均发生次数 λ'},\n    '二项分布': {'name': '二项分布', 'type': 'discrete', 'scipy_name': 'binom', 'args': [], 'kwargs': {'n': 10, 'p': 0.5}, 'estimated_param_count': 0, '参数说明': 'n=试验次数，p=成功概率'},\n    '负二项分布': {'name': '负二项分布', 'type': 'discrete', 'scipy_name': 'nbinom', 'args': [], 'kwargs': {'n': 10, 'p': 0.5}, 'estimated_param_count': 0, '参数说明': 'n=成功次数，p=成功概率'},\n    '几何分布': {'name': '几何分布', 'type': 'discrete', 'scipy_name': 'geom', 'args': [], 'kwargs': {'p': 0.5}, 'estimated_param_count': 0, '参数说明': 'p=首次成功概率'},\n    '超几何分布': {'name': '超几何分布', 'type': 'discrete', 'scipy_name': 'hypergeom', 'args': [], 'kwargs': {'M': 100, 'n': 20, 'N': 10}, 'estimated_param_count': 0, '参数说明': 'M=总体数，n=总体成功数，N=抽样数'},\n    '伯努利分布': {'name': '伯努利分布', 'type': 'discrete', 'scipy_name': 'bernoulli', 'args': [], 'kwargs': {'p': 0.5}, 'estimated_param_count': 0, '参数说明': 'p=成功概率'},\n}\n\n\ndef _items(_value):\n    if _value is None:\n        return []\n    if isinstance(_value, (list, tuple)):\n        return [item for item in _value if item is not None]\n    return [_value]\n\n\ndef _validate(_model, _label):\n    if not isinstance(_model, dict):\n        raise RuntimeError(_label + '必须是 JSON 对象（dict）')\n    _scipy_name = _model.get('scipy_name') or _model.get('scipy分布名')\n    if not _scipy_name or not hasattr(stats, str(_scipy_name)):\n        raise RuntimeError(_label + '缺少有效的 scipy_name')\n    _args = _model.get('args', _model.get('位置参数', [])) or []\n    _kwargs = _model.get('kwargs', _model.get('命名参数', {})) or {}\n    if not isinstance(_args, (list, tuple)) or not isinstance(_kwargs, dict):\n        raise RuntimeError(_label + '的 args 必须是数组、kwargs 必须是对象')\n    try:\n        getattr(stats, str(_scipy_name))(*list(_args), **dict(_kwargs))\n    except Exception as _err:\n        raise RuntimeError(_label + '参数无效：' + str(_err))\n    _result = copy.deepcopy(_model)\n    _result['scipy_name'] = str(_scipy_name)\n    _result['args'] = list(_args)\n    _result['kwargs'] = dict(_kwargs)\n    _result.setdefault('name', str(_scipy_name))\n    _result.setdefault('type', 'discrete' if hasattr(getattr(stats, str(_scipy_name)), 'pmf') else 'continuous')\n    _result.setdefault('estimated_param_count', 0)\n    return _result\n\n\n# 可选：把输入口连入的新分布模型保存到自定义目录\ntry:\n    _incoming = new_model\nexcept NameError:\n    _incoming = None\n_saved = []\nif _items(_incoming):\n    if not _model_dir or not os.path.isdir(_model_dir):\n        raise RuntimeError('保存新模型前，请先选择有效的“自定义模型目录”')\n    for _index, _item in enumerate(_items(_incoming), start=1):\n        _clean = _validate(_item, '第 ' + str(_index) + ' 个新模型')\n        _base = _re.sub(r'[<>:\"/\\|?*]+', '_', str(_clean.get('name') or _clean['scipy_name'])).strip(' ._') or 'distribution'\n        _path = os.path.join(_model_dir, _base + '.json')\n        _number = 1\n        while os.path.exists(_path):\n            _path = os.path.join(_model_dir, _base + ' (' + str(_number) + ').json')\n            _number += 1\n        with open(_path, 'w', encoding='utf-8') as _file:\n            _json.dump(_clean, _file, ensure_ascii=False, indent=2)\n        _saved.append(os.path.basename(_path))\n\n# 读取当前选择：内置名称，或选择器生成的 custom:文件名\nif not isinstance(_selected, str) or not _selected:\n    raise RuntimeError('请选择一个理论分布')\nif _selected.startswith('custom:'):\n    if not _model_dir or not os.path.isdir(_model_dir):\n        raise RuntimeError('读取自定义分布前，请先选择有效的“自定义模型目录”')\n    _file_key = _selected[len('custom:'):]\n    if os.path.basename(_file_key) != _file_key:\n        raise RuntimeError('自定义模型文件名无效')\n    _path = os.path.join(_model_dir, _file_key + '.json')\n    if not os.path.isfile(_path):\n        raise RuntimeError('自定义模型库中找不到：' + _file_key)\n    try:\n        with open(_path, encoding='utf-8') as _file:\n            _distribution = _validate(_json.load(_file), '自定义模型“' + _file_key + '”')\n    except RuntimeError:\n        raise\n    except Exception as _err:\n        raise RuntimeError('自定义模型读取失败：' + str(_err))\n    _source = '自定义模型库'\nelse:\n    if _selected not in _builtins:\n        raise RuntimeError('内置模型中找不到：' + _selected)\n    _distribution = _validate(_builtins[_selected], '内置模型“' + _selected + '”')\n    _source = '内置模型'\n\n# 高级参数覆盖：只允许覆盖接口字段，避免直接修改插件代码\nif isinstance(_overrides_text, str) and _overrides_text.strip():\n    try:\n        _overrides = _json.loads(_overrides_text)\n    except Exception as _err:\n        raise RuntimeError('参数覆盖不是合法 JSON：' + str(_err))\n    if not isinstance(_overrides, dict):\n        raise RuntimeError('参数覆盖必须是 JSON 对象')\n    for _key in ('args', 'kwargs', 'estimated_param_count'):\n        if _key in _overrides:\n            _distribution[_key] = _overrides[_key]\n    _distribution = _validate(_distribution, '参数覆盖后的分布模型')\n\n_distribution['source'] = _source\n_custom_names = []\nif _model_dir and os.path.isdir(_model_dir):\n    _custom_names = sorted([name[:-5] for name in os.listdir(_model_dir) if name.lower().endswith('.json')])\n_catalog = {\n    '当前模型': _distribution['name'],\n    '来源': _source,\n    '分布类型': '离散型' if _distribution.get('type') == 'discrete' else '连续型',\n    'scipy_name': _distribution['scipy_name'],\n    'args': _distribution['args'],\n    'kwargs': _distribution['kwargs'],\n    '内置模型数': len(_builtins),\n    '内置模型': list(_builtins.keys()),\n    '自定义模型数': len(_custom_names),\n    '自定义模型': _custom_names,\n    '本次保存': _saved,\n}\nprint('概率分布模型：' + _distribution['name'] + '（' + _catalog['分布类型'] + '，' + _source + '）')\nprint('SciPy：' + _distribution['scipy_name'] + '；args=' + str(_distribution['args']) + '；kwargs=' + str(_distribution['kwargs']))\nreturn {'distribution': _distribution, 'catalog': _catalog}",
+  "icon": "package",
+  "name": "概率分布模型",
+  "inputs": [
+    {
+      "name": "new_model",
+      "type": "Model",
+      "multiple": true,
+      "required": false,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "distribution_name",
+      "hint": "选择一个内置理论分布；选择自定义模型目录后，目录中的 JSON 模型也会显示在这里",
+      "kind": "distribution-model",
+      "label": "理论分布",
+      "default": "正态分布",
+      "options": [
+        "正态分布",
+        "均匀分布",
+        "指数分布",
+        "伽马分布",
+        "贝塔分布",
+        "卡方分布",
+        "t分布",
+        "F分布",
+        "对数正态分布",
+        "威布尔分布",
+        "逻辑斯蒂分布",
+        "拉普拉斯分布",
+        "柯西分布",
+        "瑞利分布",
+        "泊松分布",
+        "二项分布",
+        "负二项分布",
+        "几何分布",
+        "超几何分布",
+        "伯努利分布"
+      ]
+    },
+    {
+      "key": "parameter_overrides",
+      "hint": "留空使用模型默认参数。示例：正态分布填 {\"kwargs\":{\"loc\":10,\"scale\":2}}；泊松分布填 {\"kwargs\":{\"mu\":5}}",
+      "kind": "str",
+      "label": "参数覆盖（JSON，可选）",
+      "default": "",
+      "advanced": true
+    },
+    {
+      "key": "folder",
+      "hint": "选择后自动扫描目录中的 .json 分布模型；连接“新模型”输入口时也会保存到此目录",
+      "kind": "folder",
+      "label": "自定义模型目录（可选）",
+      "default": "",
+      "advanced": true
+    }
+  ],
+  "source": "builtin-distribution-model-library",
+  "outputs": [
+    {
+      "name": "distribution",
+      "type": "Model",
+      "direction": "out"
+    },
+    {
+      "name": "模型表",
+      "type": "JSON",
+      "direction": "out"
+    }
+  ],
+  "version": "1.0.0",
+  "category": "统计分析",
+  "description": "为分布检验提供理论分布模型。默认内置正态、泊松等 20 个常见分布；可选择自定义模型目录，目录中新加入的 JSON 分布模型会自动出现在选择器中，也可从“新模型”输入口保存。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "内置 14 个连续型与 6 个离散型常见分布，输出接口兼容分布检验",
+    "支持自定义 JSON 分布模型目录与新模型保存"
+  ]
+}
