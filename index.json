@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T03:35:28.154Z",
+  "updated": "2026-09-03T04:28:30.713Z",
   "count": 18,
   "plugins": [
     {
@@ -68,10 +68,10 @@
       "name": "数据导出",
       "icon": "upload",
       "category": "数据处理",
-      "description": "导出任意数量的 CSV、PNG 和 JSON；CSV / PNG / JSON 可单独输入，每个已连接的导入接口各生成一个文件。",
-      "version": "4.1.0",
-      "author": "ModMata 官方",
-      "updated": "2026-09-01"
+      "description": "导出任意数量的 CSV、PNG 和 JSON（CSV 可逐份命名，右侧栏预览每份内容并对应命名）；CSV / PNG / JSON 可单独输入，每个已连接的导入接口各生成一个文件。",
+      "version": "4.2.0",
+      "author": "社区用户",
+      "updated": "2026-09-03"
     },
     {
       "id": "feature-scaling",
