@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T13:57:37.083Z",
-  "count": 21,
+  "updated": "2026-09-03T14:22:09.525Z",
+  "count": 22,
   "plugins": [
     {
       "id": "chi2-fisher-tests",
@@ -21,6 +21,16 @@
       "description": "连接数据导入插件，选择一个特征；数值列生成 300 DPI 直方图、KDE、均值和中位数，类别列生成频数柱状图。",
       "version": "3.0.2",
       "author": "Modmata",
+      "updated": "2026-09-03"
+    },
+    {
+      "id": "distribution-model-library",
+      "name": "概率分布模型",
+      "icon": "package",
+      "category": "统计分析",
+      "description": "为分布检验提供理论分布模型。默认内置正态、泊松等 20 个常见分布；可选择自定义模型目录，目录中新加入的 JSON 分布模型会自动出现在选择器中，也可从“新模型”输入口保存。",
+      "version": "1.0.0",
+      "author": "Wilson.",
       "updated": "2026-09-03"
     },
     {
