@@ -1,0 +1,85 @@
+{
+  "id": "chi2-fisher-tests",
+  "code": "# 分布检验：从上游概率分布插件读取分布接口，执行拟合优度检验\n# 分布接口支持：scipy 冻结分布对象；或包含 name/type/scipy_name/args/kwargs/estimated_param_count 的字典\nimport io\nimport csv as _csv\nimport numpy as np\nimport pandas as pd\nfrom scipy import stats\n\nmethod = {{method}}\nvalue_column = {{value_column}}\nalpha = float({{alpha}})\nmin_expected = float({{min_expected}})\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _fmt(value, digits=6):\n    try:\n        number = float(value)\n        return None if not np.isfinite(number) else round(number, digits)\n    except (TypeError, ValueError):\n        return value\n\n\ndef _distribution_interface(value):\n    if value is None:\n        raise RuntimeError('请连接并先运行上游的概率分布插件')\n    if hasattr(value, 'cdf'):\n        dist = value\n        dist_name = getattr(getattr(value, 'dist', None), 'name', value.__class__.__name__)\n        dist_type = '离散型' if hasattr(value, 'pmf') else '连续型'\n        args = list(getattr(value, 'args', ()) or ())\n        kwargs = dict(getattr(value, 'kwds', {}) or {})\n        return dist, str(dist_name), dist_type, args, kwargs, len(args) + len(kwargs)\n    if not isinstance(value, dict):\n        raise RuntimeError('distribution 必须是概率分布插件输出的分布接口（字典或 scipy 冻结分布对象）')\n    scipy_name = value.get('scipy_name') or value.get('scipy分布名')\n    if not scipy_name or not hasattr(stats, str(scipy_name)):\n        raise RuntimeError('分布接口缺少有效的 scipy_name，无法取得 CDF/PMF')\n    factory = getattr(stats, str(scipy_name))\n    args = list(value.get('args', value.get('位置参数', [])) or [])\n    kwargs = dict(value.get('kwargs', value.get('命名参数', {})) or {})\n    try:\n        dist = factory(*args, **kwargs)\n    except Exception as exc:\n        raise RuntimeError('概率分布插件返回的参数无法构造理论分布：' + str(exc))\n    kind = value.get('type') or value.get('分布类型')\n    if kind in ('discrete', '离散', '离散型'):\n        dist_type = '离散型'\n    elif kind in ('continuous', '连续', '连续型'):\n        dist_type = '连续型'\n    else:\n        dist_type = '离散型' if hasattr(dist, 'pmf') else '连续型'\n    display_name = value.get('name') or value.get('分布名称') or str(scipy_name)\n    param_count = int(value.get('estimated_param_count', value.get('估计参数个数', len(args) + len(kwargs))))\n    return dist, str(display_name), dist_type, args, kwargs, max(0, param_count)\n\n\nif data is None:\n    raise RuntimeError('请连接并先运行上游的数据导入插件')\nif not 0 < alpha < 1:\n    raise RuntimeError('显著性水平必须在 0 到 1 之间')\nif min_expected < 1:\n    raise RuntimeError('最小理论期望频数不能小于 1')\n\ndf = _to_frame(data)\nif not value_column:\n    candidates = [str(c) for c in df.columns if pd.to_numeric(df[c], errors='coerce').notna().sum() >= max(3, int(len(df) * 0.8))]\n    if not candidates:\n        raise RuntimeError('没有找到可检验的数值列，请先检查数据内容')\n    value_column = candidates[0]\nif value_column not in df.columns:\n    raise RuntimeError('数据中找不到数值列「' + str(value_column) + '」')\nsample = pd.to_numeric(df[value_column], errors='coerce').dropna().to_numpy(dtype=float)\nif len(sample) < 5:\n    raise RuntimeError('有效数值样本不足 5 个，无法进行分布检验')\n\ndist, dist_name, dist_type, dist_args, dist_kwargs, estimated_param_count = _distribution_interface(distribution)\nchosen_method = method\nif method == '自动选择':\n    chosen_method = '卡方拟合优度检验' if dist_type == '离散型' else 'Kolmogorov-Smirnov检验'\nif chosen_method == 'Kolmogorov-Smirnov检验' and dist_type != '连续型':\n    raise RuntimeError('Kolmogorov-Smirnov检验仅用于连续型分布；当前理论分布为离散型，请改用卡方拟合优度检验')\nif chosen_method == '卡方拟合优度检验' and dist_type != '离散型':\n    raise RuntimeError('卡方拟合优度检验在本插件中用于离散型分布；当前理论分布为连续型，请改用 Kolmogorov-Smirnov检验')\n\nparameter_text = '位置参数=' + str(dist_args) + '；命名参数=' + str(dist_kwargs)\nreport = {\n    '报告名称': '分布检验报告',\n    '数据列': str(value_column),\n    '有效样本量': int(len(sample)),\n    '理论分布': dist_name,\n    '分布类型': dist_type,\n    '估计参数': parameter_text,\n    '检验方法': chosen_method,\n    '显著性水平α': alpha,\n}\n\nif chosen_method == 'Kolmogorov-Smirnov检验':\n    result = stats.kstest(sample, dist.cdf)\n    statistic = float(result.statistic)\n    p_value = float(result.pvalue)\n    report.update({\n        'KS统计量D': _fmt(statistic),\n        'p值': _fmt(p_value),\n        '参数估计说明': '分布参数由上游概率分布插件提供；若参数由同一样本估计，常规KS的p值为近似结果',\n    })\nelse:\n    rounded = np.rint(sample).astype(int)\n    if not np.allclose(sample, rounded, atol=1e-9):\n        raise RuntimeError('卡方拟合优度检验要求离散整数样本；所选列包含非整数值')\n    low, high = int(rounded.min()), int(rounded.max())\n    values = np.arange(low, high + 1)\n    observed = np.array([(rounded == value).sum() for value in values], dtype=float)\n    probabilities = np.asarray(dist.pmf(values), dtype=float)\n    if len(probabilities) != len(values) or np.any(~np.isfinite(probabilities)) or np.any(probabilities < 0):\n        raise RuntimeError('概率分布插件返回的 PMF 无效')\n    probabilities[0] += max(0.0, float(dist.cdf(low - 1)))\n    probabilities[-1] += max(0.0, 1.0 - float(dist.cdf(high)))\n    expected = probabilities * len(rounded)\n    groups = [[str(value), float(obs), float(exp)] for value, obs, exp in zip(values, observed, expected)]\n    while len(groups) > 2 and min(group[2] for group in groups) < min_expected:\n        index = min(range(len(groups)), key=lambda i: groups[i][2])\n        neighbor = 1 if index == 0 else len(groups) - 2 if index == len(groups) - 1 else (index - 1 if groups[index - 1][2] <= groups[index + 1][2] else index + 1)\n        a, b = sorted((index, neighbor))\n        groups[a] = [groups[a][0] + '～' + groups[b][0], groups[a][1] + groups[b][1], groups[a][2] + groups[b][2]]\n        groups.pop(b)\n    if len(groups) < 2 or any(group[2] < min_expected for group in groups):\n        raise RuntimeError('合并低频组后仍无法满足理论期望频数要求，请增加样本量或调整上游理论分布')\n    obs = np.array([group[1] for group in groups], dtype=float)\n    exp = np.array([group[2] for group in groups], dtype=float)\n    exp *= obs.sum() / exp.sum()\n    statistic = float(np.sum((obs - exp) ** 2 / exp))\n    dof = int(len(groups) - 1 - estimated_param_count)\n    if dof < 1:\n        raise RuntimeError('合并后有效分组过少，扣除上游估计参数后自由度不足 1')\n    p_value = float(stats.chi2.sf(statistic, dof))\n    report.update({\n        '卡方统计量χ²': _fmt(statistic),\n        '自由度': dof,\n        'p值': _fmt(p_value),\n        '合并后组数': int(len(groups)),\n        '最小理论期望频数': _fmt(min(group[2] for group in groups)),\n        '分组明细': [{'取值范围': group[0], '实际频数': int(group[1]), '理论期望频数': _fmt(group[2], 4)} for group in groups],\n    })\n\nif p_value < alpha:\n    decision = '拒绝原假设'\n    final_conclusion = '在显著性水平 α=' + str(alpha) + ' 下，样本与“' + dist_name + '”存在显著差异，不能认为样本服从该理论分布。'\nelse:\n    decision = '不能拒绝原假设'\n    final_conclusion = '在显著性水平 α=' + str(alpha) + ' 下，未发现样本与“' + dist_name + '”存在显著差异，样本可以认为服从该理论分布。'\nreport['假设检验决策'] = decision\nreport['最终结论'] = final_conclusion\n\nrows = []\ndef _flatten(value, prefix=''):\n    if isinstance(value, dict):\n        for key, item in value.items():\n            _flatten(item, prefix + ('｜' if prefix else '') + str(key))\n    elif isinstance(value, list):\n        for index, item in enumerate(value, 1):\n            _flatten(item, prefix + '｜第' + str(index) + '项')\n    else:\n        rows.append((prefix, '' if value is None else str(value)))\n_flatten(report)\nbuf = io.StringIO()\nwriter = _csv.writer(buf, lineterminator='\\n')\nwriter.writerow(['指标', '值'])\nwriter.writerows(rows)\nreport_csv = buf.getvalue()\n\nprint('【分布检验报告】' + str(value_column) + ' → ' + dist_name)\nprint('检验方法：' + chosen_method + '；样本量 n=' + str(len(sample)) + '；α=' + str(alpha))\nprint('统计量=' + ('%.6g' % statistic) + '；p值=' + ('%.6g' % p_value))\nprint('结论：' + final_conclusion)\n\nif isinstance(data, str):\n    out_data = data\nelif isinstance(data, bytes):\n    out_data = data.decode('utf-8-sig')\nelse:\n    out_data = data.to_csv(index=False)\nreturn {'report': report, 'report_csv': report_csv, 'data': out_data}",
+  "icon": "📋",
+  "name": "分布检验",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    },
+    {
+      "name": "distribution",
+      "type": "Model",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "method",
+      "hint": "自动选择：连续型分布使用 Kolmogorov-Smirnov 检验，离散型分布使用卡方拟合优度检验",
+      "kind": "enum",
+      "label": "检验方法",
+      "default": "自动选择",
+      "options": [
+        "自动选择",
+        "Kolmogorov-Smirnov检验",
+        "卡方拟合优度检验"
+      ]
+    },
+    {
+      "key": "value_column",
+      "hint": "留空时自动选择第一列数值列",
+      "kind": "column",
+      "label": "样本数值列",
+      "default": ""
+    },
+    {
+      "key": "alpha",
+      "hint": "p 值小于该水平时拒绝“样本服从理论分布”的原假设",
+      "kind": "float",
+      "label": "显著性水平",
+      "default": 0.05
+    },
+    {
+      "key": "min_expected",
+      "hint": "仅卡方拟合优度检验使用；低频取值会自动合并",
+      "kind": "float",
+      "label": "最小理论期望频数",
+      "default": 5
+    }
+  ],
+  "source": "community",
+  "outputs": [
+    {
+      "name": "report",
+      "type": "JSON",
+      "direction": "out"
+    },
+    {
+      "name": "report_csv",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    }
+  ],
+  "version": "2.0.0",
+  "category": "统计分析",
+  "changelog": [
+    "2.0.0：由分类变量独立性检验改为理论分布拟合优度检验；接入上游概率分布接口；加入 KS 与卡方拟合优度检验。"
+  ],
+  "description": "读取上游概率分布插件提供的理论分布与已估计参数，对一列样本执行拟合优度检验。连续型分布使用 Kolmogorov-Smirnov 检验，离散型分布使用卡方拟合优度检验，并输出统计量、p 值和中文结论。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "两个分类列自动交叉成列联表并剔除全零行列",
+    "卡方自动检查期望频数<5的格子占比，小样本/期望不足提示改用Fisher（笔记案例 8,2;3,7 卡方误判 vs Fisher p≈0.070）",
+    "Fisher 精确检验含双侧/单侧 p、优势比 OR 及 95% CI、零格子+0.5校正"
+  ]
+}
