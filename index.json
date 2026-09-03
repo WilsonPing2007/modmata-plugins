@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-03T08:18:59.912Z",
-  "count": 19,
+  "updated": "2026-09-03T12:13:27.208Z",
+  "count": 20,
   "plugins": [
     {
       "id": "csv-feature-distribution",
@@ -71,6 +71,16 @@
       "description": "导出任意数量的 CSV、PNG 和 JSON（CSV 可逐份命名，右侧栏预览每份内容并对应命名）；CSV / PNG / JSON 可单独输入，每个已连接的导入接口各生成一个文件。",
       "version": "4.2.0",
       "author": "Modmata",
+      "updated": "2026-09-03"
+    },
+    {
+      "id": "feature-builder",
+      "name": "构造特征列",
+      "icon": "function",
+      "category": "待学习",
+      "description": "逐行构造新特征列：a[i]/b[i] 相除、a[i]-b[i] 差值、ln(a[i]) 对数、sum(a[i]) 合计、mean(a[i]) 平均、a[i]/sum(a[i]) 占比、cumsum(a)[i] 累计，也可写 (a[i]-mean(a[i]))/std(a[i]) 做标准化。「筛选行」可选：如 b[i] == '蔬菜'、b[i] > 5",
+      "version": "1.0.0",
+      "author": "Wilson.",
       "updated": "2026-09-03"
     },
     {
