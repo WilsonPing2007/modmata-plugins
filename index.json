@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-04T11:28:34.834Z",
+  "updated": "2026-09-04T16:46:51.063Z",
   "count": 23,
   "plugins": [
     {
@@ -55,13 +55,13 @@
     },
     {
       "id": "eda-boxplot-outliers",
-      "name": "箱线图与异常值诊断",
-      "icon": "📦",
+      "name": "可视化-云雨图",
+      "icon": "cloud-rain",
       "category": "统计分析",
-      "description": "对最多 8 个数值字段绘制 300 DPI 箱线图或小提琴图，使用 IQR 识别异常值并输出具体行号、边界和原数据。",
-      "version": "1.0.3",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "使用固定 1.5×IQR 输出异常值位置，并附带异常值检测",
+      "version": "1.1.0",
+      "author": "Wilson.",
+      "updated": "2026-09-04"
     },
     {
       "id": "eda-correlation-heatmap",
