@@ -1,48 +1,55 @@
 {
   "id": "eda-boxplot-outliers",
-  "name": "箱线图与异常值诊断",
-  "icon": "📦",
-  "category": "统计分析",
-  "description": "对最多 8 个数值字段绘制 300 DPI 箱线图或小提琴图，使用 IQR 识别异常值并输出具体行号、边界和原数据。",
-  "version": "1.0.3",
-  "masterLevel": 0,
-  "masterEvidence": [
-    "按字段输出 IQR 异常边界与具体行号",
-    "输出 300 DPI 多字段小面板诊断图"
-  ],
-  "params": [
-    {
-      "key": "columns",
-      "label": "数值字段",
-      "kind": "columns",
-      "default": [],
-      "hint": "留空时分析全部数值字段；最多 8 个"
-    },
-    {
-      "key": "chart_type",
-      "label": "图形类型",
-      "kind": "enum",
-      "default": "箱线图",
-      "options": [
-        "箱线图",
-        "小提琴图"
-      ]
-    },
-    {
-      "key": "iqr_multiplier",
-      "label": "IQR 倍数",
-      "kind": "float",
-      "default": 1.5
-    }
-  ],
+  "code": "# E3 云雨图与异常值诊断：云雨图 / 小提琴图 / 箱线图 + 固定 1.5×IQR 诊断\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 15,\n    'axes.labelsize': 11,\n    'xtick.labelsize': 9.5,\n    'ytick.labelsize': 9.5,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nPALETTE = ['#4F7FB3', '#DD6F75', '#956CB4', '#57A36B', '#DF9A3C', '#3E9CA6', '#B97855', '#7589A8', '#C07DA2', '#7E9B58', '#D8B24C', '#4E91C6']\nGRID = '#D9DEE5'\nTEXT = '#2D333B'\nIQR_MULTIPLIER = 1.5\ncategory_column = {{category_column}}\ndistribution_column = {{distribution_column}}\nchart_type = {{chart_type}}\norientation = {{orientation}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _safe_label(value):\n    if pd.isna(value):\n        return '缺失'\n    return str(value)\n\n\ndef _style(ax, is_vertical):\n    ax.spines['top'].set_visible(False)\n    ax.spines['right'].set_visible(False)\n    ax.spines['left'].set_color('#59636E')\n    ax.spines['bottom'].set_color('#59636E')\n    ax.spines['left'].set_linewidth(0.9)\n    ax.spines['bottom'].set_linewidth(0.9)\n    ax.grid(axis='y' if is_vertical else 'x', linestyle='--', linewidth=0.65, color=GRID, alpha=0.78)\n    ax.set_axisbelow(True)\n    ax.tick_params(colors='#46505A')\n\n\ndef _summary(series, original_index):\n    clean = pd.to_numeric(series, errors='coerce').dropna()\n    if clean.empty:\n        raise RuntimeError('分布列没有可绘制的有效数值')\n    q1 = float(clean.quantile(0.25))\n    median = float(clean.quantile(0.5))\n    q3 = float(clean.quantile(0.75))\n    iqr = q3 - q1\n    lower = q1 - IQR_MULTIPLIER * iqr\n    upper = q3 + IQR_MULTIPLIER * iqr\n    inlier = clean[(clean >= lower) & (clean <= upper)]\n    whisker_min = float(inlier.min()) if len(inlier) else float(clean.min())\n    whisker_max = float(inlier.max()) if len(inlier) else float(clean.max())\n    numeric_all = pd.to_numeric(series, errors='coerce')\n    mask = numeric_all.notna() & ((numeric_all < lower) | (numeric_all > upper))\n    positions = np.flatnonzero(mask.to_numpy())\n    row_labels = original_index[positions]\n    return {\n        'count': int(clean.size),\n        'q1': q1,\n        'median': median,\n        'q3': q3,\n        'iqr': float(iqr),\n        'lower_bound': float(lower),\n        'upper_bound': float(upper),\n        'whisker_min': whisker_min,\n        'whisker_max': whisker_max,\n        'outlier_count': int(mask.sum()),\n        'outlier_rate': float(mask.mean()) if len(mask) else 0.0,\n        'outlier_rows': [int(i) if isinstance(i, (int, np.integer)) else str(i) for i in row_labels.tolist()],\n        'outlier_values': [float(v) for v in numeric_all[mask].tolist()],\n    }\n\n\ndef _violin(ax, values, position, color, vertical, half=False):\n    if len(values) < 2 or np.unique(values).size < 2:\n        return\n    offset = 0.19 if half else 0.0\n    center = position + offset\n    parts = ax.violinplot(\n        values,\n        positions=[center],\n        vert=vertical,\n        widths=0.52 if half else 0.72,\n        showmeans=False,\n        showmedians=False,\n        showextrema=False,\n        points=160,\n        bw_method=0.35,\n    )\n    for body in parts['bodies']:\n        body.set_facecolor(color)\n        body.set_edgecolor('none' if half else color)\n        body.set_alpha(0.30 if half else 0.28)\n        if half:\n            vertices = body.get_paths()[0].vertices\n            if vertical:\n                vertices[:, 0] = np.maximum(vertices[:, 0], position + 0.09)\n            else:\n                vertices[:, 1] = np.maximum(vertices[:, 1], position + 0.09)\n        else:\n            body.set_linewidth(1.25)\n            body.set_alpha(0.30)\n\n\ndef _scatter(ax, values, position, color, vertical, side=False, seed=0):\n    rng = np.random.default_rng(20260904 + seed)\n    jitter = rng.normal(0, 0.055 if side else 0.075, len(values))\n    center = position - 0.20 if side else position\n    categorical = center + np.clip(jitter, -0.15, 0.15)\n    if vertical:\n        ax.scatter(categorical, values, s=13, c=color, alpha=0.78, edgecolors='white', linewidths=0.18, zorder=3)\n    else:\n        ax.scatter(values, categorical, s=13, c=color, alpha=0.78, edgecolors='white', linewidths=0.18, zorder=3)\n\n\ndef _box(ax, values, position, color, vertical, show_fliers):\n    props = dict(linewidth=1.05, color='#3E464F')\n    box = ax.boxplot(\n        [values],\n        positions=[position],\n        vert=vertical,\n        widths=0.13 if not show_fliers else 0.46,\n        whis=IQR_MULTIPLIER,\n        patch_artist=True,\n        showfliers=show_fliers,\n        boxprops=dict(facecolor=color, edgecolor='#3E464F', linewidth=1.05, alpha=0.68),\n        medianprops=dict(color='#20262D', linewidth=1.5),\n        whiskerprops=props,\n        capprops=props,\n        flierprops=dict(marker='o', markersize=4.0, markerfacecolor=color, markeredgecolor='white', markeredgewidth=0.35, alpha=0.82),\n        manage_ticks=False,\n    )\n    return box\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif chart_type not in ('云雨图', '小提琴图', '箱线图'):\n    raise RuntimeError('图形类型必须是云雨图、小提琴图或箱线图')\nif orientation not in ('纵向', '横向'):\n    raise RuntimeError('分布方向必须是纵向或横向')\n\ndf = _to_frame(data)\ndistribution_column = str(distribution_column or '').strip()\ncategory_column = str(category_column or '').strip()\nif not distribution_column:\n    raise RuntimeError('请选择一个分布列')\nif distribution_column not in df.columns:\n    raise RuntimeError('找不到分布列：' + distribution_column)\nif category_column and category_column not in df.columns:\n    raise RuntimeError('找不到类别列：' + category_column)\n\nnumeric_values = pd.to_numeric(df[distribution_column], errors='coerce')\nif numeric_values.notna().sum() == 0:\n    raise RuntimeError('分布列必须包含可转换为数值的数据：' + distribution_column)\n\nplot_df = pd.DataFrame({'__value__': numeric_values}, index=df.index)\nif category_column:\n    plot_df['__group__'] = df[category_column].map(_safe_label)\nelse:\n    plot_df['__group__'] = '全部样本'\nplot_df = plot_df.dropna(subset=['__value__'])\ngroups = list(dict.fromkeys(plot_df['__group__'].tolist()))\nif not groups:\n    raise RuntimeError('没有可绘制的有效数据')\nif len(groups) > 12:\n    raise RuntimeError('为保证科研图可读性，类别列最多支持 12 个类别')\n\nis_vertical = orientation == '纵向'\nlabel_length = max([len(str(group)) for group in groups] + [4])\nif is_vertical:\n    fig_width = min(16.0, max(6.6, 1.45 * len(groups) + 2.4))\n    fig_height = 6.3 + min(1.2, max(0, label_length - 8) * 0.04)\nelse:\n    fig_width = 9.2\n    fig_height = min(15.0, max(5.2, 0.82 * len(groups) + 2.5))\nfig, ax = plt.subplots(figsize=(fig_width, fig_height), facecolor='white')\npositions = np.arange(1, len(groups) + 1, dtype=float)\nby_category = {}\ntotal_outliers = 0\n\nfor index, (position, group) in enumerate(zip(positions, groups)):\n    group_data = plot_df.loc[plot_df['__group__'] == group, '__value__']\n    values = group_data.to_numpy(dtype=float)\n    color = PALETTE[index % len(PALETTE)]\n    item = _summary(group_data, group_data.index.to_numpy())\n    by_category[str(group)] = item\n    total_outliers += item['outlier_count']\n\n    if chart_type == '云雨图':\n        _violin(ax, values, position, color, is_vertical, half=True)\n        _box(ax, values, position, color, is_vertical, show_fliers=False)\n        _scatter(ax, values, position, color, is_vertical, side=True, seed=index)\n    elif chart_type == '小提琴图':\n        _violin(ax, values, position, color, is_vertical, half=False)\n        _scatter(ax, values, position, color, is_vertical, side=False, seed=index)\n        median = item['median']\n        if is_vertical:\n            ax.plot([position - 0.22, position + 0.22], [median, median], color='#20262D', linewidth=2.0, zorder=5)\n            ax.scatter([position], [median], s=38, facecolor='white', edgecolor='#20262D', linewidth=1.2, zorder=6)\n        else:\n            ax.plot([median, median], [position - 0.22, position + 0.22], color='#20262D', linewidth=2.0, zorder=5)\n            ax.scatter([median], [position], s=38, facecolor='white', edgecolor='#20262D', linewidth=1.2, zorder=6)\n    else:\n        _box(ax, values, position, color, is_vertical, show_fliers=True)\n\nif is_vertical:\n    ax.set_xticks(positions)\n    ax.set_xticklabels(groups, rotation=25 if label_length > 10 else 0, ha='right' if label_length > 10 else 'center')\n    ax.set_xlabel(category_column if category_column else '')\n    ax.set_ylabel(distribution_column)\n    ax.set_xlim(0.35, len(groups) + 0.65)\nelse:\n    ax.set_yticks(positions)\n    ax.set_yticklabels(groups)\n    ax.set_ylabel(category_column if category_column else '')\n    ax.set_xlabel(distribution_column)\n    ax.set_ylim(0.35, len(groups) + 0.65)\n    ax.invert_yaxis()\n\n_style(ax, is_vertical)\ncategory_note = category_column if category_column else '未选择类别列（全部样本）'\nax.set_title(chart_type + '与异常值诊断', loc='left', fontweight='bold', color=TEXT, pad=12)\nfig.text(0.075, 0.025, '异常值诊断固定采用 1.5×IQR；云雨图中的箱体不重复绘制离群点，散点保留全部观测。', fontsize=8.5, color='#66707A')\nfig.subplots_adjust(left=0.12 if is_vertical else 0.18, right=0.97, top=0.90, bottom=0.17 if is_vertical else 0.13)\n_buffer = io.BytesIO()\nfig.savefig(_buffer, format='png', dpi=300, facecolor='white', bbox_inches='tight')\nplt.close(fig)\nimage = 'data:image/png;base64,' + base64.b64encode(_buffer.getvalue()).decode('ascii')\nreport = {\n    'method': 'IQR',\n    'iqr_multiplier': IQR_MULTIPLIER,\n    'chart_type': chart_type,\n    'orientation': orientation,\n    'category_column': category_column or None,\n    'distribution_column': distribution_column,\n    'categories': groups,\n    'total_outliers': int(total_outliers),\n    'by_category': by_category,\n    'note': '云雨图的箱线层隐藏离群点标记，雨点层保留全部观测值。' if chart_type == '云雨图' else None,\n}\nreturn {'image': image, 'report': report, 'data': data}",
+  "icon": "cloud-rain",
+  "name": "可视化-云雨图",
   "inputs": [
     {
       "name": "data",
       "type": "CSV",
-      "direction": "in",
-      "required": true
+      "required": true,
+      "direction": "in"
     }
   ],
+  "params": [
+    {
+      "key": "category_column",
+      "hint": "不选时把全部有效数据作为一个总体",
+      "kind": "column",
+      "label": "类别列",
+      "default": "",
+      "emptyLabel": "不选"
+    },
+    {
+      "key": "distribution_column",
+      "hint": "选择需要分析与绘制的数值列",
+      "kind": "column",
+      "label": "分布列",
+      "default": ""
+    },
+    {
+      "key": "chart_type",
+      "kind": "enum",
+      "label": "图形类型（单选）",
+      "default": "云雨图",
+      "options": [
+        "云雨图",
+        "小提琴图",
+        "箱线图"
+      ]
+    },
+    {
+      "key": "orientation",
+      "kind": "enum",
+      "label": "分布方向",
+      "default": "纵向",
+      "options": [
+        "纵向",
+        "横向"
+      ]
+    }
+  ],
+  "source": "builtin-eda",
   "outputs": [
     {
       "name": "image",
@@ -60,6 +67,13 @@
       "direction": "out"
     }
   ],
-  "code": "# E3 箱线图与异常值诊断：多字段小面板 + IQR 异常位置报告\nimport io\nimport math\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport seaborn as sns\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 12,\n    'axes.labelsize': 10,\n    'xtick.labelsize': 9,\n    'ytick.labelsize': 9,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nNAVY = '#1F3A93'\nORANGE = '#E69F00'\nGRID = '#E0E0E0'\nselected_columns = {{columns}}\niqr_multiplier = float({{iqr_multiplier}})\nchart_type = {{chart_type}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _style(ax):\n    ax.spines['top'].set_visible(False)\n    ax.spines['right'].set_visible(False)\n    ax.spines['left'].set_color('#999999')\n    ax.spines['bottom'].set_color('#999999')\n    ax.grid(axis='x', linestyle='--', linewidth=0.5, color=GRID, alpha=0.55)\n    ax.set_axisbelow(True)\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif iqr_multiplier <= 0:\n    raise RuntimeError('IQR 倍数必须大于 0')\nif chart_type not in ('箱线图', '小提琴图'):\n    raise RuntimeError('图形类型必须是箱线图或小提琴图')\n\ndf = _to_frame(data)\nnumeric = df.select_dtypes(include=np.number)\nif selected_columns:\n    missing = [str(c) for c in selected_columns if str(c) not in df.columns]\n    if missing:\n        raise RuntimeError('找不到字段：' + '、'.join(missing))\n    non_numeric = [str(c) for c in selected_columns if str(c) not in numeric.columns]\n    if non_numeric:\n        raise RuntimeError('异常值诊断只能选择数值字段：' + '、'.join(non_numeric))\n    columns = [str(c) for c in selected_columns]\nelse:\n    columns = [str(c) for c in numeric.columns]\nif not columns:\n    raise RuntimeError('没有可用于异常值诊断的数值字段')\nif len(columns) > 8:\n    raise RuntimeError('为保证图表可读性，一次最多选择 8 个数值字段')\n\nby_column = {}\ntotal_outliers = 0\nfor column in columns:\n    series = pd.to_numeric(df[column], errors='coerce')\n    clean = series.dropna()\n    q1 = float(clean.quantile(0.25)) if len(clean) else 0.0\n    q3 = float(clean.quantile(0.75)) if len(clean) else 0.0\n    iqr = q3 - q1\n    lower = q1 - iqr_multiplier * iqr\n    upper = q3 + iqr_multiplier * iqr\n    mask = series.notna() & ((series < lower) | (series > upper))\n    rows_found = [int(i) if isinstance(i, (int, np.integer)) else str(i) for i in df.index[mask].tolist()]\n    values_found = [float(v) for v in series[mask].tolist()]\n    by_column[column] = {\n        'q1': q1,\n        'q3': q3,\n        'iqr': float(iqr),\n        'lower_bound': float(lower),\n        'upper_bound': float(upper),\n        'outlier_count': int(mask.sum()),\n        'outlier_rate': float(mask.mean()) if len(mask) else 0.0,\n        'outlier_rows': rows_found,\n        'outlier_values': values_found,\n    }\n    total_outliers += int(mask.sum())\n\nncols = 2 if len(columns) > 1 else 1\nnrows = math.ceil(len(columns) / ncols)\nlongest_label = max([len(str(column)) for column in columns] + [0])\nfigure_width = 10.5 if len(columns) <= 2 else min(15.0, 11.0 + max(0, longest_label - 10) * 0.14)\ncolumn_gap = 0.28 if len(columns) <= 2 else 0.46\nfig, axes = plt.subplots(nrows, ncols, figsize=(figure_width, max(4.8, 3.0 * nrows + 1.8)), squeeze=False, facecolor='white')\nfor index, column in enumerate(columns):\n    ax = axes[index // ncols][index % ncols]\n    series = pd.to_numeric(df[column], errors='coerce').dropna()\n    if chart_type == '小提琴图' and series.nunique() >= 2:\n        sns.violinplot(x=series, color='#A8C5E5', inner='quartile', linewidth=1.0, ax=ax)\n    else:\n        sns.boxplot(x=series, color='#A8C5E5', width=0.42, linewidth=1.1, fliersize=4.5, flierprops={'marker': 'o', 'markerfacecolor': ORANGE, 'markeredgecolor': ORANGE, 'alpha': 0.8}, ax=ax)\n    item = by_column[column]\n    ax.set_title(f'{column}  ·  异常 {item[\"outlier_count\"]} 个', loc='left', fontweight='bold', pad=9)\n    ax.set_xlabel(column)\n    ax.set_ylabel('')\n    _style(ax)\nfor index in range(len(columns), nrows * ncols):\n    axes[index // ncols][index % ncols].axis('off')\n\nfig.suptitle(f'{chart_type}与 IQR 异常值诊断', x=0.07, y=0.975, ha='left', fontsize=16, fontweight='bold', color='#333333')\nfig.text(0.07, 0.025, f'注：异常边界 = Q1 − {iqr_multiplier:g}×IQR 与 Q3 + {iqr_multiplier:g}×IQR；共识别 {total_outliers} 个异常单元格。', fontsize=8.5, color='#666666')\nfig.subplots_adjust(left=0.08, right=0.97, top=0.82, bottom=0.18, hspace=0.72, wspace=column_gap)\n_buffer = io.BytesIO()\nfig.savefig(_buffer, format='png', dpi=300, facecolor='white', bbox_inches='tight')\nplt.close(fig)\nimage = 'data:image/png;base64,' + base64.b64encode(_buffer.getvalue()).decode('ascii')\nreport = {\n    'method': 'IQR',\n    'iqr_multiplier': iqr_multiplier,\n    'columns': columns,\n    'total_outliers': int(total_outliers),\n    'by_column': by_column,\n}\nreturn {'image': image, 'report': report, 'data': data}\n",
-  "source": "builtin-eda"
+  "version": "1.1.0",
+  "category": "统计分析",
+  "execution": "python",
+  "description": "使用固定 1.5×IQR 输出异常值位置，并附带异常值检测",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "支持云雨图、小提琴图、箱线图三种互斥模式与横纵切换",
+    "固定 1.5×IQR 输出类别级异常值诊断"
+  ]
 }
