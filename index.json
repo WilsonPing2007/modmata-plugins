@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-05T05:26:44.216Z",
+  "updated": "2026-09-05T06:13:24.319Z",
   "count": 23,
   "plugins": [
     {
@@ -58,10 +58,10 @@
       "name": "可视化-云雨图",
       "icon": "cloud-rain",
       "category": "统计分析",
-      "description": "使用固定 1.5×IQR 输出异常值位置，并附带异常值检测",
-      "version": "1.1.0",
+      "description": "按类别绘制 300 DPI 云雨图、小提琴图或箱线图；密度与统计使用全量原始样本，仅对云雨图和小提琴图的散点层进行视觉抽样。",
+      "version": "1.2.2",
       "author": "Wilson.",
-      "updated": "2026-09-04"
+      "updated": "2026-09-05"
     },
     {
       "id": "eda-correlation-heatmap",
