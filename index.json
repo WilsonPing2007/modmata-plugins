@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-05T08:35:11.947Z",
-  "count": 25,
+  "updated": "2026-09-05T13:40:57.909Z",
+  "count": 26,
   "plugins": [
     {
       "id": "ai-visualization",
@@ -252,6 +252,16 @@
       "version": "1.0.1",
       "author": "Modmata",
       "updated": "2026-09-03"
+    },
+    {
+      "id": "time-series-chart",
+      "name": "时序图",
+      "icon": "chart-line",
+      "category": "统计分析",
+      "description": "自动识别 CSV 日期列，可按类别或全部数据绘制时序线；支持年、月、日及包容结束日期的区间、小时到年的求和汇总、3 点平滑与原始散点。",
+      "version": "1.1.0",
+      "author": "Wilson.",
+      "updated": "2026-09-05"
     }
   ]
 }
