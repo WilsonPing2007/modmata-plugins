@@ -1,0 +1,84 @@
+{
+  "id": "time-series-chart",
+  "code": "# 时序图：自动识别日期列，按类别与最小时间单位汇总数值\nimport io\nimport re\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport matplotlib.dates as mdates\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 15,\n    'axes.labelsize': 11,\n    'xtick.labelsize': 9,\n    'ytick.labelsize': 9,\n    'legend.fontsize': 9,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nPALETTE = ['#4F7FB3', '#DD6F75', '#956CB4', '#57A36B', '#DF9A3C', '#3E9CA6']\nGRID = '#D9DEE5'\nTEXT = '#2D333B'\ncategory_column = {{category_column}}\nvalue_column = {{value_column}}\ntime_range = {{time_range}}\nminimum_unit = {{minimum_unit}}\nuse_smoothing = bool({{smoothing}})\nkeep_scatter = bool({{keep_scatter}})\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _normalise_date_text(value):\n    if pd.isna(value):\n        return None\n    text = str(value).strip()\n    if not text:\n        return None\n    text = text.replace('年', '-').replace('月', '-').replace('日', '')\n    month_only = re.fullmatch(r'(\\d{4})[.\\-/](\\d{1,2})[.\\-/]?', text)\n    if month_only:\n        return f'{month_only.group(1)}-{int(month_only.group(2)):02d}-01'\n    full_date = re.fullmatch(r'(\\d{4})[.\\-/](\\d{1,2})[.\\-/](\\d{1,2})(.*)', text)\n    if full_date:\n        return f'{full_date.group(1)}-{int(full_date.group(2)):02d}-{int(full_date.group(3)):02d}{full_date.group(4)}'\n    return text\n\n\ndef _parse_dates(series):\n    normalised = series.map(_normalise_date_text)\n    try:\n        return pd.to_datetime(normalised, errors='coerce', format='mixed')\n    except (TypeError, ValueError):\n        return pd.to_datetime(normalised, errors='coerce')\n\n\ndef _detect_date_column(frame, excluded):\n    keywords = ('时间', '日期', '年月', '月份', 'date', 'time', 'timestamp')\n    candidates = []\n    for index, column in enumerate(frame.columns):\n        if column in excluded:\n            continue\n        name = str(column).lower()\n        named = any(word in name for word in keywords)\n        if pd.api.types.is_numeric_dtype(frame[column]) and not named:\n            continue\n        parsed = _parse_dates(frame[column])\n        valid = int(parsed.notna().sum())\n        if valid == 0:\n            continue\n        ratio = valid / max(1, len(frame))\n        score = ratio + (2.0 if named else 0.0) - index * 1e-6\n        candidates.append((score, column, parsed))\n    if not candidates:\n        raise RuntimeError('没有自动识别到日期列；请把日期列命名为“日期”“时间”“date”等，并使用可识别的日期格式')\n    candidates.sort(key=lambda item: item[0], reverse=True)\n    score, column, parsed = candidates[0]\n    if score < 0.6:\n        raise RuntimeError('日期列有效日期不足 60%，请检查日期格式')\n    return column, parsed\n\n\ndef _parse_time_range(raw):\n    text = '' if raw is None else str(raw).strip()\n    if not text:\n        return None, None, '全部时间'\n    endpoint_pattern = r'\\d{4}(?:\\.\\d{1,2}(?:\\.\\d{1,2})?)?'\n    match = re.fullmatch(rf'({endpoint_pattern})(?:\\s*-\\s*({endpoint_pattern}))?', text)\n    if not match:\n        raise RuntimeError('时间段格式不正确：支持 2020、2020.3、2020.3.4，或用“-”连接两个日期')\n\n    def endpoint_bounds(value):\n        parts = [int(part) for part in value.split('.')]\n        year = parts[0]\n        month = parts[1] if len(parts) >= 2 else 1\n        day = parts[2] if len(parts) == 3 else 1\n        if len(parts) >= 2 and not 1 <= month <= 12:\n            raise RuntimeError('月份必须在 1 到 12 之间，例如 2020.3')\n        try:\n            start_at = pd.Timestamp(year=year, month=month, day=day)\n        except ValueError as error:\n            raise RuntimeError(f'日期不存在：{value}') from error\n        if len(parts) == 1:\n            end_at = start_at + pd.offsets.YearBegin(1)\n        elif len(parts) == 2:\n            end_at = start_at + pd.offsets.MonthBegin(1)\n        else:\n            end_at = start_at + pd.Timedelta(days=1)\n        return start_at, end_at\n\n    start_text = match.group(1)\n    end_text = match.group(2)\n    start, single_end = endpoint_bounds(start_text)\n    if end_text is None:\n        return start, single_end, start_text\n    end_start, end_exclusive = endpoint_bounds(end_text)\n    if end_start < start:\n        raise RuntimeError('时间段的结束日期不能早于开始日期')\n    return start, end_exclusive, f'{start_text}-{end_text}'\n\n\ndef _bucket_dates(dates, unit):\n    if unit == '小时':\n        return dates.dt.floor('h')\n    if unit == '日':\n        return dates.dt.floor('D')\n    if unit == '周':\n        return dates.dt.to_period('W-SUN').dt.start_time\n    if unit == '月':\n        return dates.dt.to_period('M').dt.start_time\n    if unit == '年':\n        return dates.dt.to_period('Y').dt.start_time\n    raise RuntimeError('最小单位只能选择：小时、日、周、月或年')\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\ndf = _to_frame(data)\nif df.empty:\n    raise RuntimeError('CSV 是空表，没有可绘制的数据')\nif category_column and category_column not in df.columns:\n    raise RuntimeError('找不到类别列：' + category_column)\nif not value_column or value_column not in df.columns:\n    raise RuntimeError('请选择有效的时序列')\nif category_column and category_column == value_column:\n    raise RuntimeError('类别列和时序列不能是同一列')\n\nexcluded_columns = {value_column}\nif category_column:\n    excluded_columns.add(category_column)\ndate_column, parsed_dates = _detect_date_column(df, excluded_columns)\nstart, end_exclusive, range_label = _parse_time_range(time_range)\nworking = pd.DataFrame({\n    '_date': parsed_dates,\n    '_category': df[category_column] if category_column else pd.Series('全部数据', index=df.index),\n    '_value': pd.to_numeric(df[value_column], errors='coerce'),\n})\nworking = working.dropna(subset=['_date', '_category', '_value'])\nworking = working[working['_category'].astype(str).str.strip() != '']\nif start is not None:\n    working = working[(working['_date'] >= start) & (working['_date'] < end_exclusive)]\nif working.empty:\n    raise RuntimeError('所选时间段内没有同时具备日期、类别和数值的有效数据')\n\ncategory_order = working['_category'].drop_duplicates().tolist()\nif len(category_order) > 6:\n    raise RuntimeError(f'所选时间段内有 {len(category_order)} 个类别，最多只能绘制 6 个类别；请先筛选或合并类别')\nworking['_bucket'] = _bucket_dates(working['_date'], minimum_unit)\naggregated = (\n    working.groupby(['_category', '_bucket'], sort=False, observed=True)['_value']\n    .sum()\n    .reset_index()\n    .sort_values('_bucket')\n)\n\nfig, ax = plt.subplots(figsize=(10.2, 5.8), facecolor='white')\nfor index, category in enumerate(category_order):\n    series = aggregated[aggregated['_category'] == category].sort_values('_bucket')\n    x = series['_bucket']\n    raw_y = series['_value'].astype(float)\n    color = PALETTE[index]\n    line_y = raw_y.rolling(window=3, center=True, min_periods=1).mean() if use_smoothing else raw_y\n    ax.plot(x, line_y, color=color, linewidth=2.2, label=str(category), zorder=3)\n    if keep_scatter:\n        ax.scatter(x, raw_y, s=27, color=color, edgecolor='white', linewidth=0.55, alpha=0.88, zorder=4)\n\nax.set_title(f'{value_column} 时序图', loc='left', fontweight='bold', color=TEXT, pad=13)\nax.set_xlabel(f'时间（自动识别：{date_column}；按{minimum_unit}汇总）')\nax.set_ylabel(f'{value_column}（求和）')\nax.spines['top'].set_visible(False)\nax.spines['right'].set_visible(False)\nax.spines['left'].set_color('#59636E')\nax.spines['bottom'].set_color('#59636E')\nax.grid(axis='y', linestyle='--', linewidth=0.6, color=GRID, alpha=0.72)\nax.set_axisbelow(True)\nax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=4, maxticks=10))\nax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))\nlegend_title = str(category_column) if category_column else '类别列：不选'\nax.legend(frameon=False, loc='upper left', bbox_to_anchor=(1.01, 1.0), borderaxespad=0, title=legend_title)\nmode_text = '3 点居中移动平均' if use_smoothing else '原始折线'\nscatter_text = '保留原始散点' if keep_scatter else '不显示散点'\nfig.text(0.075, 0.025, f'时间段：{range_label}；{mode_text}；{scatter_text}；共 {len(working):,} 条有效记录。', fontsize=8.5, color='#66707A')\nfig.subplots_adjust(left=0.10, right=0.79, top=0.89, bottom=0.17)\n\n_buffer = io.BytesIO()\nfig.savefig(_buffer, format='png', dpi=300, bbox_inches=None, facecolor='white')\nplt.close(fig)\nimage = 'data:image/png;base64,' + base64.b64encode(_buffer.getvalue()).decode('ascii')\nreturn {'image': image}\n",
+  "icon": "chart-line",
+  "name": "时序图",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "category_column",
+      "hint": "不选时把全部有效数据绘制为一条线；选择后最多绘制 6 个类别",
+      "kind": "column",
+      "label": "类别列",
+      "default": "",
+      "emptyLabel": "不选"
+    },
+    {
+      "key": "value_column",
+      "hint": "选择纵轴数值列；日期列会从 CSV 中自动识别",
+      "kind": "column",
+      "label": "时序列",
+      "default": ""
+    },
+    {
+      "key": "time_range",
+      "hint": "支持 2020、2020.3、2020.3.4，或 2020-2023 等区间；结束的年、月、日均完整包含",
+      "kind": "str",
+      "label": "时间段",
+      "default": "",
+      "advanced": true
+    },
+    {
+      "key": "minimum_unit",
+      "hint": "同一类别在每个时间单位内的数值会相加",
+      "kind": "enum",
+      "label": "最小单位",
+      "default": "日",
+      "options": [
+        "小时",
+        "日",
+        "周",
+        "月",
+        "年"
+      ],
+      "advanced": true
+    },
+    {
+      "key": "smoothing",
+      "kind": "bool",
+      "label": "平滑处理",
+      "default": false,
+      "advanced": true
+    },
+    {
+      "key": "keep_scatter",
+      "kind": "bool",
+      "label": "保留原始散点",
+      "default": true,
+      "advanced": true
+    }
+  ],
+  "source": "builtin-eda",
+  "outputs": [
+    {
+      "name": "image",
+      "type": "Image",
+      "direction": "out"
+    }
+  ],
+  "version": "1.1.0",
+  "category": "统计分析",
+  "description": "自动识别 CSV 日期列，可按类别或全部数据绘制时序线；支持年、月、日及包容结束日期的区间、小时到年的求和汇总、3 点平滑与原始散点。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "自动识别日期列，支持年/月/日单段与包容结束日期的区间",
+    "类别列可不选；按时间单位求和，分类时最多六条线"
+  ]
+}
