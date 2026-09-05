@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-05T07:52:06.579Z",
-  "count": 24,
+  "updated": "2026-09-05T08:35:11.947Z",
+  "count": 25,
   "plugins": [
     {
       "id": "ai-visualization",
@@ -122,6 +122,16 @@
       "version": "1.0.0",
       "author": "Wilson.",
       "updated": "2026-09-03"
+    },
+    {
+      "id": "feature-encoding",
+      "name": "特征编码",
+      "icon": "database-plus",
+      "category": "预测",
+      "description": "将一个分类列转换为模型可用的数字：独热编码为每个类别生成 0/1 列；标签编码按勾选顺序映射为 0、1、2…。输出保留其他列，并删除原来的编码列。",
+      "version": "1.0.0",
+      "author": "Wilson.",
+      "updated": "2026-09-05"
     },
     {
       "id": "feature-scaling",
