@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-05T07:12:06.960Z",
-  "count": 23,
+  "updated": "2026-09-05T07:52:06.579Z",
+  "count": 24,
   "plugins": [
     {
       "id": "ai-visualization",
@@ -12,6 +12,16 @@
       "version": "1.1.0",
       "author": "Wilson.",
       "updated": "2026-09-04"
+    },
+    {
+      "id": "anomaly-detection",
+      "name": "异常值检测",
+      "icon": "search",
+      "category": "统计分析",
+      "description": "使用 iForest、LOF、IQR、DBSCAN 或 Z-score 检测异常值；保留全部原始行并新增“是否为异常值”标记，IQR 与 Z-score 同时输出诊断图。",
+      "version": "1.0.0",
+      "author": "Wilson.",
+      "updated": "2026-09-05"
     },
     {
       "id": "chi2-fisher-tests",
