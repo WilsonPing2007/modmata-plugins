@@ -1,0 +1,85 @@
+{
+  "id": "anomaly-detection",
+  "code": "# 异常值检测 v1.0.0：IQR / Z-score / iForest / LOF / DBSCAN\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\n\nmethod = {{method}}\ndetection_columns = {{detection_columns}}\ndetection_column = {{detection_column}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _plot_setup():\n    import matplotlib\n    matplotlib.use('Agg')\n    import matplotlib.pyplot as plt\n    plt.rcParams.update({\n        'font.family': 'sans-serif',\n        'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n        'axes.unicode_minus': False,\n        'font.size': 10,\n        'figure.facecolor': 'white',\n        'axes.facecolor': 'white',\n    })\n    return plt\n\n\ndef _to_png(fig, plt):\n    buffer = io.BytesIO()\n    fig.savefig(buffer, format='png', dpi=300, facecolor='white', bbox_inches='tight')\n    plt.close(fig)\n    return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')\n\n\ndef _style_axes(axes):\n    for ax in axes:\n        ax.spines['top'].set_visible(False)\n        ax.spines['right'].set_visible(False)\n        ax.grid(axis='y', linestyle='--', linewidth=0.6, color='#D9DEE5', alpha=0.75)\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\ndf = _to_frame(data)\nif df.empty:\n    raise RuntimeError('输入数据为空，无法检测异常值')\nif method not in ('IQR', 'Z-score', 'iForest', 'LOF', 'DBSCAN'):\n    raise RuntimeError('当前版本暂不支持检测方法：' + str(method))\n\nimage = None\nparameters = {}\noutlier_scores = None\n\nif method in ('IQR', 'Z-score'):\n    if not detection_column:\n        raise RuntimeError(str(method) + ' 方法需要选择一个检测列')\n    if detection_column not in df.columns:\n        raise RuntimeError('找不到检测列：' + str(detection_column))\n    selected_columns = [detection_column]\n    series = pd.to_numeric(df[detection_column], errors='coerce')\n    valid_mask = series.notna()\n    valid = series[valid_mask]\n    if len(valid) < 4:\n        raise RuntimeError(str(method) + ' 检测至少需要 4 个有效数值')\n\n    if method == 'IQR':\n        q1 = float(valid.quantile(0.25))\n        median = float(valid.quantile(0.5))\n        q3 = float(valid.quantile(0.75))\n        iqr = q3 - q1\n        lower = q1 - 1.5 * iqr\n        upper = q3 + 1.5 * iqr\n        outlier_mask = valid_mask & ((series < lower) | (series > upper))\n        parameters = {\n            'iqr_multiplier': 1.5, 'q1': q1, 'median': median, 'q3': q3,\n            'iqr': float(iqr), 'lower_bound': float(lower), 'upper_bound': float(upper),\n        }\n        plt = _plot_setup()\n        fig, (ax_box, ax_points) = plt.subplots(1, 2, figsize=(9.2, 4.8), gridspec_kw={'width_ratios': [0.9, 2.4]})\n        ax_box.boxplot(valid.to_numpy(), vert=True, whis=1.5, widths=0.42,\n                       patch_artist=True,\n                       boxprops={'facecolor': '#C9DAEC', 'edgecolor': '#4F7FB3'},\n                       medianprops={'color': '#D75D69', 'linewidth': 2},\n                       whiskerprops={'color': '#4F7FB3'}, capprops={'color': '#4F7FB3'},\n                       flierprops={'marker': 'o', 'markerfacecolor': '#DD6F75', 'markeredgecolor': 'white', 'markersize': 5})\n        ax_box.set_xticks([1], [detection_column])\n        ax_box.set_ylabel('数值')\n        ax_box.set_title('IQR 箱线诊断', loc='left', fontweight='bold')\n        normal_positions = np.flatnonzero((valid_mask & ~outlier_mask).to_numpy())\n        outlier_positions = np.flatnonzero(outlier_mask.to_numpy())\n        ax_points.scatter(normal_positions + 1, series.iloc[normal_positions], s=18, color='#4F7FB3', alpha=0.72, label='正常值')\n        if len(outlier_positions):\n            ax_points.scatter(outlier_positions + 1, series.iloc[outlier_positions], s=40, color='#DD6F75', edgecolor='white', linewidth=0.6, label='异常值', zorder=3)\n        ax_points.axhline(lower, color='#DF9A3C', linestyle='--', linewidth=1.1, label='IQR 下界/上界')\n        ax_points.axhline(upper, color='#DF9A3C', linestyle='--', linewidth=1.1)\n        ax_points.set_xlabel('数据行号')\n        ax_points.set_ylabel(detection_column)\n        ax_points.set_title('异常位置', loc='left', fontweight='bold')\n        ax_points.legend(frameon=False)\n        _style_axes((ax_box, ax_points))\n        fig.suptitle('异常值检测 · IQR', fontsize=14, fontweight='bold')\n        fig.tight_layout()\n        image = _to_png(fig, plt)\n    else:\n        mean = float(valid.mean())\n        std = float(valid.std(ddof=0))\n        if not np.isfinite(std) or std <= 0:\n            raise RuntimeError('Z-score 无法用于标准差为 0 的常量列')\n        z_scores = (series - mean) / std\n        outlier_mask = valid_mask & (z_scores.abs() > 3.0)\n        outlier_scores = z_scores.abs()\n        parameters = {'threshold': 3.0, 'mean': mean, 'standard_deviation': std}\n        plt = _plot_setup()\n        fig, ax = plt.subplots(figsize=(9.2, 4.8))\n        normal_positions = np.flatnonzero((valid_mask & ~outlier_mask).to_numpy())\n        outlier_positions = np.flatnonzero(outlier_mask.to_numpy())\n        ax.scatter(normal_positions + 1, z_scores.iloc[normal_positions], s=20, color='#4F7FB3', alpha=0.75, label='正常值')\n        if len(outlier_positions):\n            ax.scatter(outlier_positions + 1, z_scores.iloc[outlier_positions], s=44, color='#DD6F75', edgecolor='white', linewidth=0.6, label='异常值', zorder=3)\n        ax.axhline(3.0, color='#DF9A3C', linestyle='--', linewidth=1.2, label='阈值 ±3')\n        ax.axhline(-3.0, color='#DF9A3C', linestyle='--', linewidth=1.2)\n        ax.axhline(0.0, color='#7589A8', linewidth=0.8)\n        ax.set_xlabel('数据行号')\n        ax.set_ylabel('Z-score')\n        ax.set_title('异常值检测 · Z-score', loc='left', fontweight='bold')\n        ax.legend(frameon=False)\n        _style_axes((ax,))\n        fig.tight_layout()\n        image = _to_png(fig, plt)\nelse:\n    if not isinstance(detection_columns, (list, tuple)) or not detection_columns:\n        raise RuntimeError(method + ' 方法需要至少选择一个检测列')\n    selected_columns = list(dict.fromkeys(detection_columns))\n    missing_columns = [column for column in selected_columns if column not in df.columns]\n    if missing_columns:\n        raise RuntimeError('找不到检测列：' + '、'.join(map(str, missing_columns)))\n    numeric = df[selected_columns].apply(pd.to_numeric, errors='coerce')\n    valid_mask = numeric.notna().all(axis=1)\n    valid = numeric.loc[valid_mask]\n    if len(valid) < 8:\n        raise RuntimeError(method + ' 检测至少需要 8 行全部检测列均有效的数据')\n    if method == 'iForest':\n        from sklearn.ensemble import IsolationForest\n        model = IsolationForest(n_estimators=200, contamination='auto', random_state=42, n_jobs=1)\n        matrix = valid.to_numpy(dtype=float)\n        labels = model.fit_predict(matrix)\n        scores_valid = -model.score_samples(matrix)\n        parameters = {'n_estimators': 200, 'contamination': 'auto', 'random_state': 42}\n    elif method == 'LOF':\n        from sklearn.neighbors import LocalOutlierFactor\n        from sklearn.preprocessing import RobustScaler\n        matrix = RobustScaler().fit_transform(valid.to_numpy(dtype=float))\n        n_neighbors = min(20, max(2, int(np.sqrt(len(valid)))))\n        model = LocalOutlierFactor(n_neighbors=n_neighbors, contamination='auto')\n        labels = model.fit_predict(matrix)\n        scores_valid = -model.negative_outlier_factor_\n        parameters = {'n_neighbors': int(n_neighbors), 'contamination': 'auto', 'scaling': 'RobustScaler'}\n    else:\n        from sklearn.cluster import DBSCAN\n        from sklearn.neighbors import NearestNeighbors\n        from sklearn.preprocessing import RobustScaler\n        matrix = RobustScaler().fit_transform(valid.to_numpy(dtype=float))\n        min_samples = min(10, max(3, int(np.sqrt(len(valid)))))\n        neighbors = NearestNeighbors(n_neighbors=min_samples).fit(matrix)\n        distances, _ = neighbors.kneighbors(matrix)\n        k_distances = distances[:, -1]\n        positive = k_distances[k_distances > 0]\n        eps = float(np.quantile(positive, 0.90)) if len(positive) else 0.5\n        eps = max(eps, 1e-6)\n        labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(matrix)\n        scores_valid = k_distances\n        cluster_count = len(set(labels.tolist()) - {-1})\n        parameters = {\n            'eps': eps, 'eps_selection': '90%分位k近邻距离',\n            'min_samples': int(min_samples), 'cluster_count': int(cluster_count),\n            'scaling': 'RobustScaler',\n        }\n    outlier_mask = pd.Series(False, index=df.index)\n    outlier_mask.loc[valid.index] = labels == -1\n    outlier_scores = pd.Series(np.nan, index=df.index, dtype=float)\n    outlier_scores.loc[valid.index] = scores_valid\n\nflags = outlier_mask.astype(int)\nout_df = df.copy()\nout_df['是否为异常值'] = flags.to_numpy(dtype=int)\noutlier_positions = np.flatnonzero(outlier_mask.to_numpy())\nreport = {\n    'method': method,\n    'selected_columns': selected_columns,\n    'total_rows': int(len(df)),\n    'valid_rows': int(valid_mask.sum()),\n    'skipped_rows': int((~valid_mask).sum()),\n    'outlier_count': int(outlier_mask.sum()),\n    'outlier_rate': float(outlier_mask.sum() / valid_mask.sum()),\n    'outlier_row_numbers': [int(position + 1) for position in outlier_positions],\n    'parameters': parameters,\n    'note': '缺失或无法转换为数值的行未参与检测，原行保留且异常标记为 0。',\n}\nif method in ('IQR', 'Z-score'):\n    report['outlier_values'] = [float(series.iloc[position]) for position in outlier_positions]\nif outlier_scores is not None:\n    report['outlier_scores'] = [\n        {'row_number': int(position + 1), 'score': float(outlier_scores.iloc[position])}\n        for position in outlier_positions\n    ]\nreturn {'data': out_df, 'image': image, 'report': report}\n",
+  "icon": "search",
+  "name": "异常值检测",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "method",
+      "hint": "iForest 适合高维大数据；LOF 查局部异常；IQR/Z-score 用于单变量；DBSCAN 适合聚类结构。",
+      "kind": "enum",
+      "label": "检测方法（单选）",
+      "default": "iForest",
+      "options": [
+        "iForest",
+        "LOF",
+        "IQR",
+        "DBSCAN",
+        "Z-score"
+      ]
+    },
+    {
+      "key": "detection_columns",
+      "hint": "选择参与联合检测的数值列。",
+      "kind": "columns",
+      "label": "检测列（多选）",
+      "default": [],
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "iForest",
+          "LOF",
+          "DBSCAN"
+        ]
+      }
+    },
+    {
+      "key": "detection_column",
+      "hint": "选择一个需要检测的数值列。",
+      "kind": "column",
+      "label": "检测列（单选）",
+      "default": "",
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "IQR",
+          "Z-score"
+        ]
+      }
+    }
+  ],
+  "source": "builtin-eda",
+  "outputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    },
+    {
+      "name": "image",
+      "type": "Image",
+      "direction": "out"
+    },
+    {
+      "name": "report",
+      "type": "JSON",
+      "direction": "out"
+    }
+  ],
+  "version": "1.0.0",
+  "category": "统计分析",
+  "description": "使用 iForest、LOF、IQR、DBSCAN 或 Z-score 检测异常值；保留全部原始行并新增“是否为异常值”标记，IQR 与 Z-score 同时输出诊断图。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "五种常用异常值检测方法",
+    "输出逐行异常标记、诊断报告与可用图片"
+  ]
+}
