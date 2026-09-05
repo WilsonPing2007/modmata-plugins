@@ -1,0 +1,64 @@
+{
+  "id": "feature-encoding",
+  "code": "# 特征编码：独热编码 / 按用户选择顺序进行标签编码\nimport io\nimport re\nimport pandas as pd\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _display(value):\n    if pd.isna(value):\n        return None\n    text = str(value)\n    return text if text.strip() else None\n\n\ndef _unique_name(base, used):\n    name = base\n    number = 2\n    while name in used:\n        name = base + '_' + str(number)\n        number += 1\n    used.add(name)\n    return name\n\n\n_df = _to_frame(data).reset_index(drop=True)\nif _df.empty:\n    raise RuntimeError('原始表是空的，没有行可编码')\n_column = {{column}}\n_method = {{method}}\n_order = {{label_order}}\nif not isinstance(_column, str) or not _column:\n    raise RuntimeError('请先选择编码列')\nif _column not in [str(item) for item in _df.columns]:\n    raise RuntimeError('编码列「' + str(_column) + '」不在原始表中')\nif _method not in ('独热编码', '标签编码'):\n    raise RuntimeError('编码方式必须是“独热编码”或“标签编码”')\n\n_position = list(_df.columns).index(_column)\n_series = _df[_column]\n_values = []\nfor _value in _series.tolist():\n    _text = _display(_value)\n    if _text is not None and _text not in _values:\n        _values.append(_text)\n_base = _df.drop(columns=[_column]).copy()\n\nif _method == '标签编码':\n    if not isinstance(_order, list) or not _order:\n        raise RuntimeError('标签编码需要按顺序勾选类别：第 1 个 = 0，第 2 个 = 1，以此类推')\n    _order = [str(item) for item in _order]\n    if len(set(_order)) != len(_order):\n        raise RuntimeError('标签顺序中不能有重复类别')\n    _unknown = [item for item in _order if item not in _values]\n    if _unknown:\n        raise RuntimeError('标签顺序包含原表中不存在的类别：' + '、'.join(_unknown))\n    _missing = [item for item in _values if item not in _order]\n    if _missing:\n        raise RuntimeError('这些类别还没有选择编码顺序：' + '、'.join(_missing))\n    _mapping = {item: index for index, item in enumerate(_order)}\n    _encoded = _series.map(lambda value: pd.NA if _display(value) is None else _mapping[_display(value)]).astype('Int64')\n    _base.insert(_position, _column, _encoded)\n    print('标签编码完成：' + '，'.join(str(index) + '=' + item for index, item in enumerate(_order)))\nelse:\n    _used = set(str(item) for item in _base.columns)\n    _encoded_columns = []\n    for _value in _values:\n        _safe = re.sub(r'\\s+', '_', _value.strip()) or '空'\n        _name = _unique_name(_column + '_' + _safe, _used)\n        _encoded_columns.append((_name, (_series.map(_display) == _value).astype(int)))\n    for _offset, (_name, _encoded) in enumerate(_encoded_columns):\n        _base.insert(_position + _offset, _name, _encoded)\n    print('独热编码完成：原列「' + _column + '」已替换为 ' + str(len(_encoded_columns)) + ' 个 0/1 列')\n\nreturn {'data': _base}",
+  "icon": "database-plus",
+  "name": "特征编码",
+  "inputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "required": true,
+      "direction": "in"
+    }
+  ],
+  "params": [
+    {
+      "key": "column",
+      "hint": "选择要编码的分类列",
+      "kind": "column",
+      "label": "编码列",
+      "default": ""
+    },
+    {
+      "key": "method",
+      "hint": "独热编码生成多个 0/1 列；标签编码生成一个整数列",
+      "kind": "enum",
+      "label": "编码方式",
+      "default": "独热编码",
+      "options": [
+        "独热编码",
+        "标签编码"
+      ]
+    },
+    {
+      "key": "label_order",
+      "hint": "依次勾选类别：第 1 个编码为 0，第 2 个编码为 1，以此类推",
+      "kind": "column-values",
+      "label": "标签顺序（按勾选顺序 = 0、1、2…）",
+      "default": [],
+      "showWhen": {
+        "key": "method",
+        "values": [
+          "标签编码"
+        ]
+      },
+      "valuesFromColumn": "column"
+    }
+  ],
+  "source": "builtin-feature-encoding",
+  "outputs": [
+    {
+      "name": "data",
+      "type": "CSV",
+      "direction": "out"
+    }
+  ],
+  "version": "1.0.0",
+  "category": "预测",
+  "execution": "python",
+  "description": "将一个分类列转换为模型可用的数字：独热编码为每个类别生成 0/1 列；标签编码按勾选顺序映射为 0、1、2…。输出保留其他列，并删除原来的编码列。",
+  "masterLevel": 1,
+  "masterEvidence": [
+    "独热编码与可控顺序的标签编码"
+  ]
+}
