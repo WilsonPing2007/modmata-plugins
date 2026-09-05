@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-05T13:40:57.909Z",
+  "updated": "2026-09-05T14:01:25.493Z",
   "count": 26,
   "plugins": [
     {
@@ -88,10 +88,10 @@
       "name": "数据质量总览",
       "icon": "🩺",
       "category": "统计分析",
-      "description": "一键统计样本量、字段类型、缺失、重复、常量列和近常量列，输出 300 DPI 质量总览图、字段级 JSON 报告并原样传递数据。",
-      "version": "1.0.2",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "一键统计样本量、字段类型、缺失、重复、常量列和近常量列，并单独输出全部类别值与时间序列起止时间的 300 DPI 详情图。",
+      "version": "1.1.0",
+      "author": "Wilson.",
+      "updated": "2026-09-05"
     },
     {
       "id": "eda-scatter-matrix",
