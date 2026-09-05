@@ -1,8 +1,8 @@
 {
   "id": "hypothesis-tests",
-  "code": "# 假设检验（t检验·F检验）：独立样本t检验（含方差齐性F检验）/ 配对t检验 / 单因素方差分析ANOVA\n# report 为全平铺「指标=值」结构：指标面板渲染成论文级表格，report_csv 导出 Excel 可直接打开\nimport io\nimport json\nimport csv as _csv\nimport io as _io\nimport numpy as np\nimport pandas as pd\nfrom scipy import stats\n\nalpha = float({{alpha}})\nmethod = {{method}}\ngroup_column = {{group_column}}\nvalue_column = {{value_column}}\npaired_column = {{paired_column}}\nmu = float({{mu}})\ntail = {{tail}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _to_numeric(col):\n    return pd.to_numeric(col, errors='coerce').astype(float)\n\n\ndef _fmt(v, nd=4):\n    if v is None:\n        return None\n    try:\n        f = float(v)\n    except (TypeError, ValueError):\n        return v\n    if np.isnan(f) or np.isinf(f):\n        return None\n    return round(f, nd)\n\n\ndef _tail_p(p_two, stat, tail):\n    \"\"\"双尾 p → 单尾 p（stat 为带符号检验统计量）\"\"\"\n    if tail == '双尾':\n        return p_two\n    if tail == '右尾':\n        return (p_two / 2) if stat > 0 else (1 - p_two / 2)\n    if tail == '左尾':\n        return (p_two / 2) if stat < 0 else (1 - p_two / 2)\n    return p_two\n\n\ndef _conclusion(p, alpha, alternative):\n    if p < alpha:\n        return ('在显著性水平 α=' + str(alpha) + ' 下，p 值 = ' + ('%.6f' % p) + ' < ' + str(alpha)\n                + '，拒绝原假设：' + alternative + '，差异具有统计学显著性。')\n    return ('在显著性水平 α=' + str(alpha) + ' 下，p 值 = ' + ('%.6f' % p) + ' ≥ ' + str(alpha)\n            + '，不拒绝原假设：' + alternative + '，差异不具有统计学显著性。')\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\ndf = _to_frame(data)\nif not 0 < alpha < 1:\n    raise RuntimeError('显著性水平 alpha 必须在 0 到 1 之间')\n\nreport = {'检验方法': method, '显著性水平α': alpha}\n\n# ═══════════════ 独立样本t检验（含方差齐性F检验） ═══════════════\nif method == '独立样本t检验':\n    if not group_column or not value_column:\n        raise RuntimeError('请选择分组列和数值列')\n    if group_column not in df.columns:\n        raise RuntimeError('分组列 \"' + str(group_column) + '\" 不存在')\n    if value_column not in df.columns:\n        raise RuntimeError('数值列 \"' + str(value_column) + '\" 不存在')\n    sub = df[[group_column, value_column]].dropna()\n    if len(sub) == 0:\n        raise RuntimeError('分组列与数值列没有同时非缺失的行')\n    if group_column == value_column:\n        raise RuntimeError('分组列和数值列不能是同一个列，请重新选择（分组列选类别列，数值列选被检验的数值列）')\n    groups = {}\n    for label, g in sub.groupby(group_column, sort=True):\n        arr = _to_numeric(g[value_column]).dropna().to_numpy()\n        if len(arr) > 0:\n            groups[str(label)] = arr\n    if len(groups) != 2:\n        raise RuntimeError('独立样本t检验需要恰好 2 个分组，当前有 ' + str(len(groups)) + ' 组（数值列含非数字内容时该组会被剔除；组数 > 2 请改用单因素方差分析ANOVA）')\n    keys = list(groups.keys())\n    a, b = groups[keys[0]], groups[keys[1]]\n    n1, n2 = len(a), len(b)\n    m1, m2 = float(a.mean()), float(b.mean())\n    s1, s2 = float(a.std(ddof=1)), float(b.std(ddof=1))\n    if s1 >= s2:\n        f_stat, df_num, df_den = (s1 / s2) ** 2, n1 - 1, n2 - 1\n    else:\n        f_stat, df_num, df_den = (s2 / s1) ** 2, n2 - 1, n1 - 1\n    p_f = min(float(2 * (1 - stats.f.cdf(f_stat, df_num, df_den))), 1.0)\n    equal_var = p_f >= alpha\n    t_res = stats.ttest_ind(a, b, equal_var=equal_var)\n    t_stat = float(t_res.statistic)\n    p_two = float(t_res.pvalue)\n    p_value = _tail_p(p_two, t_stat, tail)\n    ci = t_res.confidence_interval(0.95)\n    pooled = float(np.sqrt(((n1 - 1) * s1 ** 2 + (n2 - 1) * s2 ** 2) / (n1 + n2 - 2)))\n    cohens_d = (m1 - m2) / pooled if pooled > 0 else None\n    report.update({\n        '分组列': group_column, '数值列': value_column,\n        '样本量_总': int(n1 + n2),\n        '样本量_' + keys[0]: int(n1), '样本量_' + keys[1]: int(n2),\n        keys[0] + '_均值': _fmt(m1), keys[0] + '_标准差': _fmt(s1),\n        keys[0] + '_最小值': _fmt(float(a.min())), keys[0] + '_最大值': _fmt(float(a.max())),\n        keys[1] + '_均值': _fmt(m2), keys[1] + '_标准差': _fmt(s2),\n        keys[1] + '_最小值': _fmt(float(b.min())), keys[1] + '_最大值': _fmt(float(b.max())),\n        '方差齐性F检验_F统计量': _fmt(f_stat),\n        '方差齐性F检验_分子自由度': int(df_num),\n        '方差齐性F检验_分母自由度': int(df_den),\n        '方差齐性F检验_p值': _fmt(p_f, 6),\n        '方差齐性F检验_结论': '方差齐（p ≥ α，可用Student t检验）' if equal_var else '方差不齐（p < α，采用Welch t检验）',\n        't检验_类型': 'Student t检验（方差齐）' if equal_var else 'Welch t检验（方差不齐修正）',\n        't检验_方向': tail,\n        't检验_t统计量': _fmt(t_stat),\n        't检验_自由度': _fmt(t_res.df),\n        't检验_p值': _fmt(p_value, 6),\n        't检验_均值差': _fmt(m1 - m2),\n        't检验_95%CI下限': _fmt(ci.low),\n        't检验_95%CI上限': _fmt(ci.high),\n        't检验_效应量Cohen_d': _fmt(cohens_d),\n        '结论': _conclusion(p_value, alpha, '分组「' + keys[0] + '」与「' + keys[1] + '」的' + str(value_column) + '均值存在差异'),\n    })\n\n# ═══════════════ 配对t检验 ═══════════════\nelif method == '配对t检验':\n    if not value_column or not paired_column:\n        raise RuntimeError('请选择前测列（数值列）和后测列（配对列）')\n    if value_column not in df.columns:\n        raise RuntimeError('前测列 \"' + str(value_column) + '\" 不存在')\n    if paired_column not in df.columns:\n        raise RuntimeError('后测列 \"' + str(paired_column) + '\" 不存在')\n    if value_column == paired_column:\n        raise RuntimeError('前测列和后测列不能是同一个列，请重新选择')\n    sub = df[[value_column, paired_column]].dropna()\n    if len(sub) == 0:\n        raise RuntimeError('两列没有同时非缺失的配对样本')\n    _a = _to_numeric(sub[value_column])\n    _b = _to_numeric(sub[paired_column])\n    _ok = _a.notna() & _b.notna()\n    a = _a[_ok].to_numpy()\n    b = _b[_ok].to_numpy()\n    if len(a) < 2:\n        raise RuntimeError('清洗非数字内容后配对样本不足 2 对')\n    d = a - b\n    t_res = stats.ttest_rel(a, b)\n    t_stat = float(t_res.statistic)\n    p_two = float(t_res.pvalue)\n    p_value = _tail_p(p_two, t_stat, tail)\n    ci = t_res.confidence_interval(0.95)\n    sd_d = float(d.std(ddof=1))\n    dz = float(d.mean()) / sd_d if sd_d > 0 else None\n    report.update({\n        '前测列': value_column, '后测列': paired_column,\n        '配对样本数': int(len(a)),\n        '前测_均值': _fmt(float(a.mean())), '前测_标准差': _fmt(float(a.std(ddof=1))),\n        '后测_均值': _fmt(float(b.mean())), '后测_标准差': _fmt(float(b.std(ddof=1))),\n        '差值_均值': _fmt(float(d.mean())), '差值_标准差': _fmt(sd_d),\n        '差值_最小值': _fmt(float(d.min())), '差值_最大值': _fmt(float(d.max())),\n        't检验_类型': '配对t检验（差值 = 前测 − 后测）',\n        't检验_方向': tail,\n        't检验_t统计量': _fmt(t_stat),\n        't检验_自由度': int(len(a) - 1),\n        't检验_p值': _fmt(p_value, 6),\n        't检验_均值差': _fmt(float(d.mean())),\n        't检验_95%CI下限': _fmt(ci.low),\n        't检验_95%CI上限': _fmt(ci.high),\n        't检验_效应量Cohen_dz': _fmt(dz),\n        '结论': _conclusion(p_value, alpha, '「' + str(value_column) + '」与「' + str(paired_column) + '」的均值存在差异'),\n    })\n\n# ═══════════════ 单样本t检验 ═══════════════\nelif method == '单样本t检验':\n    if not value_column:\n        raise RuntimeError('请选择数值列')\n    if value_column not in df.columns:\n        raise RuntimeError('数值列 \"' + str(value_column) + '\" 不存在')\n    arr = _to_numeric(df[value_column]).dropna().to_numpy()\n    if len(arr) < 2:\n        raise RuntimeError('数值列有效样本不足 2 个')\n    n = len(arr)\n    mean = float(arr.mean())\n    sd = float(arr.std(ddof=1))\n    t_res = stats.ttest_1samp(arr, mu)\n    t_stat = float(t_res.statistic)\n    p_two = float(t_res.pvalue)\n    p_value = _tail_p(p_two, t_stat, tail)\n    ci = t_res.confidence_interval(0.95)\n    cohens_d = (mean - mu) / sd if sd > 0 else None\n    report.update({\n        '数值列': value_column, '目标值μ0': _fmt(mu),\n        '样本量': int(n),\n        '样本_均值': _fmt(mean), '样本_标准差': _fmt(sd),\n        '样本_最小值': _fmt(float(arr.min())), '样本_最大值': _fmt(float(arr.max())),\n        't检验_类型': '单样本t检验',\n        't检验_方向': tail,\n        't检验_t统计量': _fmt(t_stat),\n        't检验_自由度': int(n - 1),\n        't检验_p值': _fmt(p_value, 6),\n        't检验_均值差(样本-目标)': _fmt(mean - mu),\n        't检验_均值95%CI下限': _fmt(ci.low),\n        't检验_均值95%CI上限': _fmt(ci.high),\n        't检验_效应量Cohen_d': _fmt(cohens_d),\n        '结论': _conclusion(p_value, alpha, '「' + str(value_column) + '」的总体均值等于目标值 ' + str(mu)),\n    })\n\n# ═══════════════ 单因素方差分析（ANOVA） ═══════════════\nelif method == '单因素方差分析(ANOVA)':\n    if not group_column or not value_column:\n        raise RuntimeError('请选择分组列和数值列')\n    if group_column not in df.columns:\n        raise RuntimeError('分组列 \"' + str(group_column) + '\" 不存在')\n    if value_column not in df.columns:\n        raise RuntimeError('数值列 \"' + str(value_column) + '\" 不存在')\n    sub = df[[group_column, value_column]].dropna()\n    if len(sub) == 0:\n        raise RuntimeError('分组列与数值列没有同时非缺失的行')\n    if group_column == value_column:\n        raise RuntimeError('分组列和数值列不能是同一个列，请重新选择（分组列选类别列，数值列选被检验的数值列）')\n    groups = {}\n    for label, g in sub.groupby(group_column, sort=True):\n        arr = _to_numeric(g[value_column]).dropna().to_numpy()\n        if len(arr) > 0:\n            groups[str(label)] = arr\n    if len(groups) < 2:\n        raise RuntimeError('ANOVA 至少需要 2 个分组，清洗非数字内容后仅剩 ' + str(len(groups)) + ' 组')\n    keys = list(groups.keys())\n    arrays = [groups[k] for k in keys]\n    f_res = stats.f_oneway(*arrays)\n    f_stat = float(f_res.statistic)\n    p_value = float(f_res.pvalue)\n    lev = stats.levene(*arrays)\n    all_ = np.concatenate(arrays)\n    grand = float(all_.mean())\n    ss_between = float(sum(len(g) * (float(g.mean()) - grand) ** 2 for g in arrays))\n    ss_total = float(((all_ - grand) ** 2).sum())\n    eta2 = ss_between / ss_total if ss_total > 0 else None\n    k, N = len(arrays), len(all_)\n    report.update({\n        '分组列': group_column, '数值列': value_column,\n        '样本量_总': int(N), '分组数': int(k),\n    })\n    for i, (key, g) in enumerate(zip(keys, arrays), 1):\n        report.update({\n            '组' + str(i) + '_标签': key,\n            '组' + str(i) + '_样本量': int(len(g)),\n            '组' + str(i) + '_均值': _fmt(float(g.mean())),\n            '组' + str(i) + '_标准差': _fmt(float(g.std(ddof=1))),\n            '组' + str(i) + '_最小值': _fmt(float(g.min())),\n            '组' + str(i) + '_最大值': _fmt(float(g.max())),\n        })\n    report.update({\n        'Levene方差齐性检验_统计量': _fmt(lev.statistic),\n        'Levene方差齐性检验_p值': _fmt(lev.pvalue, 6),\n        'Levene方差齐性检验_结论': '方差齐（满足ANOVA前提）' if float(lev.pvalue) >= alpha else '方差不齐（ANOVA结果需谨慎解读）',\n        'ANOVA_F统计量': _fmt(f_stat),\n        'ANOVA_组间自由度': int(k - 1),\n        'ANOVA_组内自由度': int(N - k),\n        'ANOVA_p值': _fmt(p_value, 6),\n        'ANOVA_效应量η²': _fmt(eta2),\n        '结论': _conclusion(p_value, alpha, str(group_column) + '各组间的' + str(value_column) + '均值存在差异'),\n    })\nelse:\n    raise RuntimeError('未知检验方法：' + str(method))\n\n# 原样透传数据给下游（可接数据导出插件）\nif isinstance(data, str):\n    out_data = data\nelif isinstance(data, bytes):\n    out_data = data.decode('utf-8-sig')\nelse:\n    out_data = data.to_csv(index=False)\n\n# report 压平成「指标,值」两列 CSV（csv 模块转义，Excel 可直接打开）\n_report_rows = []\n\n\ndef _flatten_report(obj, prefix):\n    if isinstance(obj, dict):\n        for _k, _v in obj.items():\n            _flatten_report(_v, prefix + str(_k) + '｜' if prefix else str(_k))\n    elif isinstance(obj, list):\n        for _i, _v in enumerate(obj):\n            _flatten_report(_v, prefix + '[' + str(_i) + ']')\n    else:\n        _val = '' if obj is None else str(obj)\n        _report_rows.append((prefix, _val.replace('\\n', ' ').replace('\\r', ' ')))\n\n\n_flatten_report(report, '')\n_buf = _io.StringIO()\n_writer = _csv.writer(_buf, lineterminator='\\n')\n_writer.writerow(['指标', '值'])\nfor _r in _report_rows:\n    _writer.writerow([_r[0], _r[1]])\nreport_csv = _buf.getvalue()\n\n# 报告正文打印到运行日志（右侧面板「运行日志」可完整查看）\ndef _pick(keys_sub):\n    return '；'.join(str(_k) + '=' + str(_v) for _k, _v in report.items()\n                     if any(_s in str(_k) for _s in keys_sub) and _k not in ('结论', '检验方法'))\n\n\nprint('【' + str(report['检验方法']) + '】  α = ' + str(alpha))\nprint('样本：' + _pick(['样本量', '样本_', '配对']))\nprint('描述：' + _pick(['均值', '标准差', '最小', '最大']))\nprint('检验：' + _pick(['统计量', 'p值', '自由度', 'CI', '效应量', '方差齐性', 'Levene', 'ANOVA', 't检验_']))\nprint('结论：' + str(report.get('结论', '')))\n\nreturn {'report': report, 'report_csv': report_csv, 'data': out_data}\n",
-  "icon": "📊",
-  "name": "假设检验（t检验·F检验）",
+  "code": "import io\nimport numpy as np\nimport pandas as pd\nfrom scipy import stats\n\ntest_type = {{test_type}}\ndifference_method = {{difference_method}}\nindependence_method = {{independence_method}}\ngroup_column = {{group_column}}\nvalue_column = {{value_column}}\ntail = {{tail}}\nrow_variable = {{row_variable}}\ncolumn_variable = {{column_variable}}\nalpha = float({{alpha}})\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _number(value, digits=6):\n    try:\n        value = float(value)\n        return None if not np.isfinite(value) else round(value, digits)\n    except (TypeError, ValueError):\n        return value\n\n\ndef _p_text(value):\n    return '< 0.000001' if value < 0.000001 else '= {:.6f}'.format(value)\n\n\ndef _p_display(value):\n    # 论文报告不展示浮点下溢产生的 0.000e+00；极小值统一按规范写作 p < 0.001。\n    return '< 0.001' if value < 0.001 else '{:.3f}'.format(value)\n\n\ndef _decision(value):\n    return '拒绝 H0，支持 H1' if value < alpha else '不能拒绝 H0，现有证据不足以支持 H1'\n\n\ndef _tail_p(two_sided_p, statistic):\n    if tail == '双尾':\n        return two_sided_p\n    if tail == '右尾':\n        return two_sided_p / 2 if statistic > 0 else 1 - two_sided_p / 2\n    if tail == '左尾':\n        return two_sided_p / 2 if statistic < 0 else 1 - two_sided_p / 2\n    raise RuntimeError('未知检验方向：' + str(tail))\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif not 0 < alpha < 1:\n    raise RuntimeError('显著性水平必须在 0 到 1 之间')\nif test_type not in ('差异性检验', '独立性检验'):\n    raise RuntimeError('请先选择检验类型')\n\ndf = _to_frame(data)\nreport = {'报告名称': '统计假设检验报告', '检验类型': test_type, '显著性水平 α': alpha}\n\nif test_type == '差异性检验':\n    method = difference_method\n    if method not in ('独立样本 t 检验', '单因素方差分析（ANOVA）'):\n        raise RuntimeError('请选择差异性检验的方法')\n    if not group_column or not value_column:\n        raise RuntimeError('请选择分组列和数值列')\n    if group_column == value_column:\n        raise RuntimeError('分组列和数值列不能是同一列')\n    missing = [c for c in (group_column, value_column) if c not in df.columns]\n    if missing:\n        raise RuntimeError('数据中找不到列：' + '、'.join(map(str, missing)))\n    clean = df[[group_column, value_column]].copy()\n    clean[value_column] = pd.to_numeric(clean[value_column], errors='coerce')\n    clean = clean.dropna()\n    groups = [(str(label), values[value_column].to_numpy(dtype=float))\n              for label, values in clean.groupby(group_column, sort=True)]\n    groups = [(label, values) for label, values in groups if len(values) >= 2]\n\n    if method == '独立样本 t 检验':\n        if len(groups) != 2:\n            raise RuntimeError('独立样本 t 检验要求恰好 2 组，且每组至少有 2 个有效数值；当前符合条件的分组数为 ' + str(len(groups)))\n        (label1, sample1), (label2, sample2) = groups\n        levene = stats.levene(sample1, sample2, center='median')\n        equal_var = float(levene.pvalue) >= alpha\n        result = stats.ttest_ind(sample1, sample2, equal_var=equal_var)\n        statistic = float(result.statistic)\n        p_value = float(_tail_p(float(result.pvalue), statistic))\n        n1, n2 = len(sample1), len(sample2)\n        mean1, mean2 = float(sample1.mean()), float(sample2.mean())\n        sd1, sd2 = float(sample1.std(ddof=1)), float(sample2.std(ddof=1))\n        pooled = np.sqrt(((n1 - 1) * sd1 ** 2 + (n2 - 1) * sd2 ** 2) / (n1 + n2 - 2))\n        effect = (mean1 - mean2) / pooled if pooled > 0 else None\n        significant = p_value < alpha\n        relation = '存在显著差异' if significant else '未发现显著差异'\n        test_name = 'Student 独立样本 t 检验' if equal_var else 'Welch 独立样本 t 检验'\n        if tail == '双尾':\n            h0 = 'μ({}) = μ({})：两组总体均值相等'.format(label1, label2)\n            h1 = 'μ({}) ≠ μ({})：两组总体均值不相等'.format(label1, label2)\n        elif tail == '右尾':\n            h0 = 'μ({}) ≤ μ({})'.format(label1, label2)\n            h1 = 'μ({}) > μ({})'.format(label1, label2)\n        else:\n            h0 = 'μ({}) ≥ μ({})'.format(label1, label2)\n            h1 = 'μ({}) < μ({})'.format(label1, label2)\n        report.update({\n            '检验方法': test_name,\n            '研究问题': '比较“{}”中 {} 与 {} 两组的“{}”总体均值'.format(group_column, label1, label2, value_column),\n            '检验方向': tail,\n            'H0（原假设）': h0,\n            'H1（备择假设）': h1,\n            '样本概况': '组 {}：n = {}，均值 = {}，标准差 = {}\\n组 {}：n = {}，均值 = {}，标准差 = {}'.format(label1, n1, _number(mean1, 3), _number(sd1, 3), label2, n2, _number(mean2, 3), _number(sd2, 3)),\n            '前提检验': 'Levene 检验：W = {}，p {}。{}'.format(_number(levene.statistic, 3), _p_display(float(levene.pvalue)), '方差齐，采用 Student t 检验。' if equal_var else '方差不齐，采用 Welch 校正。'),\n            '核心检验结果': '{}：t({}) = {}，p {}'.format(test_name, _number(result.df, 3), _number(statistic, 3), _p_display(p_value)),\n            '效应量与差值': '均值差（组 {} − 组 {}）= {}；Cohen d = {}'.format(label1, label2, _number(mean1 - mean2, 3), _number(effect, 3)),\n            '统计决策': _decision(p_value),\n            '统计结论': '在显著性水平 α={} 下，两组在“{}”上的均值{}。'.format(alpha, value_column, relation),\n            '论文级分析': '采用{}比较“{}”不同组别的“{}”均值。结果显示，t({}) = {}，p {}。因此，在 α={} 的显著性水平下，{}，表明两组均值{}。'.format(test_name, group_column, value_column, _number(result.df, 3), _number(statistic, 3), _p_text(p_value), alpha, _decision(p_value), relation),\n        })\n    else:\n        if len(groups) < 2:\n            raise RuntimeError('单因素方差分析至少要求 2 组，且每组至少有 2 个有效数值')\n        arrays = [values for _, values in groups]\n        result = stats.f_oneway(*arrays)\n        levene = stats.levene(*arrays, center='median')\n        statistic, p_value = float(result.statistic), float(result.pvalue)\n        combined = np.concatenate(arrays)\n        grand_mean = float(combined.mean())\n        ss_between = sum(len(values) * (float(values.mean()) - grand_mean) ** 2 for values in arrays)\n        ss_total = float(((combined - grand_mean) ** 2).sum())\n        eta_squared = ss_between / ss_total if ss_total > 0 else None\n        relation = '至少有一组均值与其他组存在显著差异' if p_value < alpha else '未发现各组总体均值存在显著差异'\n        group_summary = '；'.join('{}：n={}，均值={}，标准差={}'.format(label, len(values), _number(values.mean()), _number(values.std(ddof=1))) for label, values in groups)\n        report.update({\n            '检验方法': '单因素方差分析（ANOVA）',\n            '研究问题': '检验“{}”各组在“{}”上的总体均值是否相同'.format(group_column, value_column),\n            'H0（原假设）': 'μ1 = μ2 = … = μk：所有组的总体均值相等',\n            'H1（备择假设）': '并非所有总体均值都相等：至少有一组均值不同',\n            '样本概况': '总样本量 n = {}，共 {} 组\\n{}'.format(len(combined), len(groups), group_summary.replace('；', '\\n')),\n            '前提检验': 'Levene 检验：W = {}，p {}。{}'.format(_number(levene.statistic, 3), _p_display(float(levene.pvalue)), '满足方差齐性要求。' if float(levene.pvalue) >= alpha else '方差齐性假设可能不满足，结果需谨慎解释。'),\n            '核心检验结果': 'F({}, {}) = {}，p {}'.format(len(groups) - 1, len(combined) - len(groups), _number(statistic, 3), _p_display(p_value)),\n            '效应量': 'η² = {}'.format(_number(eta_squared, 3)),\n            '统计决策': _decision(p_value), '统计结论': '在显著性水平 α={} 下，{}。'.format(alpha, relation),\n            '论文级分析': '以“{}”为分组因素、“{}”为因变量进行单因素方差分析。结果显示，F({}, {}) = {}，p {}，η² = {}。因此，在 α={} 的显著性水平下，{}，{}。'.format(group_column, value_column, len(groups) - 1, len(combined) - len(groups), _number(statistic, 3), _p_text(p_value), _number(eta_squared, 3), alpha, _decision(p_value), relation),\n        })\nelse:\n    method = independence_method\n    if method not in ('自动选择', '卡方独立性检验', 'Fisher 精确检验'):\n        raise RuntimeError('请选择独立性检验的方法')\n    if not row_variable or not column_variable:\n        raise RuntimeError('请选择行变量和列变量')\n    if row_variable == column_variable:\n        raise RuntimeError('行变量和列变量不能是同一列')\n    missing = [c for c in (row_variable, column_variable) if c not in df.columns]\n    if missing:\n        raise RuntimeError('数据中找不到列：' + '、'.join(map(str, missing)))\n    clean = df[[row_variable, column_variable]].dropna()\n    if clean.empty:\n        raise RuntimeError('行变量和列变量没有同时非缺失的有效记录')\n    table = pd.crosstab(clean[row_variable], clean[column_variable])\n    table = table.loc[table.sum(axis=1) > 0, table.sum(axis=0) > 0]\n    if table.shape[0] < 2 or table.shape[1] < 2:\n        raise RuntimeError('列联表至少需要 2 行和 2 列')\n    chi = stats.chi2_contingency(table, correction=False)\n    expected = np.asarray(chi.expected_freq, dtype=float)\n    low_count = int((expected < 5).sum())\n    low_ratio = float(low_count / expected.size)\n    chi_valid = bool((expected >= 1).all() and low_ratio <= 0.20)\n    is_2x2 = table.shape == (2, 2)\n    chosen = method\n    reason = ''\n    if method == '自动选择':\n        if chi_valid:\n            chosen = '卡方独立性检验'\n            reason = '列联表所有期望频数均不低于 1，且低于 5 的单元格占比不超过 20%，满足卡方近似条件，因此自动采用卡方独立性检验。'\n        elif is_2x2:\n            chosen = 'Fisher 精确检验'\n            reason = '列联表不满足卡方近似条件，且为 2×2 表，因此自动采用 Fisher 精确检验。'\n        else:\n            raise RuntimeError('当前列联表不满足卡方检验条件，且不是 2×2 表，无法使用 Fisher 精确检验。请合并低频类别或增加样本量后重试')\n    elif method == '卡方独立性检验':\n        reason = '用户指定采用卡方独立性检验。' + ('列联表满足常用期望频数条件。' if chi_valid else '列联表不满足常用期望频数条件，卡方近似结果需谨慎解释。')\n    else:\n        if not is_2x2:\n            raise RuntimeError('Fisher 精确检验在本插件 V1.0 中仅支持 2×2 列联表；当前列联表为 {}×{}'.format(*table.shape))\n        reason = '用户指定采用 Fisher 精确检验。'\n\n    if chosen == '卡方独立性检验':\n        statistic, p_value, dof = float(chi.statistic), float(chi.pvalue), int(chi.dof)\n        n = int(table.to_numpy().sum())\n        phi2 = statistic / n\n        cramers_v = np.sqrt(phi2 / max(1, min(table.shape[0] - 1, table.shape[1] - 1)))\n        result_text = 'χ²({}) = {}，p {}'.format(dof, _number(statistic, 3), _p_text(p_value))\n        statistic_fields = {'χ² 统计量': _number(statistic), '自由度 df': dof, 'p 值': _number(p_value), '效应量 Cramér V': _number(cramers_v)}\n    else:\n        odds_ratio, p_value = stats.fisher_exact(table.to_numpy(), alternative='two-sided')\n        p_value, odds_ratio = float(p_value), float(odds_ratio)\n        result_text = 'Fisher 精确检验 p {}，优势比 OR = {}'.format(_p_text(p_value), _number(odds_ratio, 3))\n        statistic_fields = {'p 值': _number(p_value), '优势比 OR': _number(odds_ratio)}\n    relation = '存在显著关联' if p_value < alpha else '未发现显著关联'\n    report.update({\n        '检验方法': chosen, '研究问题': '检验分类变量“{}”与“{}”是否相互独立'.format(row_variable, column_variable),\n        'H0（原假设）': '“{}”与“{}”相互独立，不存在统计关联'.format(row_variable, column_variable),\n        'H1（备择假设）': '“{}”与“{}”不独立，存在统计关联'.format(row_variable, column_variable),\n        '方法选择说明': reason,\n        '样本与列联表': '有效样本量 n={}；列联表维度 {}×{}；观测频数 {}'.format(int(table.to_numpy().sum()), *table.shape, table.to_numpy().tolist()),\n        '卡方适用条件': '最小期望频数={}；低于 5 的单元格 {}/{}（{}）；{}'.format(_number(expected.min()), low_count, expected.size, '{:.1%}'.format(low_ratio), '满足' if chi_valid else '不满足'),\n        **statistic_fields,\n        '统计决策': _decision(p_value), '统计结论': '在显著性水平 α={} 下，变量“{}”与“{}”之间{}。'.format(alpha, row_variable, column_variable, relation),\n        '论文级分析': '对分类变量“{}”与“{}”进行独立性检验。{}检验结果显示，{}。因此，在 α={} 的显著性水平下，{}，表明两变量之间{}。'.format(row_variable, column_variable, reason, result_text, alpha, _decision(p_value), relation),\n    })\n\nprint('【统计假设检验报告】')\nprint('方法：' + str(report['检验方法']))\nprint('统计决策：' + str(report['统计决策']))\nprint('结论：' + str(report['统计结论']))\nprint('论文表述：' + str(report['论文级分析']))\nreturn {'report': report}\n",
+  "icon": "scale",
+  "name": "统计假设检验",
   "inputs": [
     {
       "name": "data",
@@ -13,68 +13,83 @@
   ],
   "params": [
     {
-      "key": "method",
-      "hint": "独立样本t检验会自动先做方差齐性F检验",
+      "key": "test_type",
+      "hint": "比较不同组的数值均值请选择差异性检验；分析两个分类变量的关联请选择独立性检验",
       "kind": "enum",
-      "label": "检验方法",
-      "default": "独立样本t检验",
+      "label": "检验类型",
+      "default": "选择检验类型",
       "options": [
-        "独立样本t检验",
-        "配对t检验",
-        "单样本t检验",
-        "单因素方差分析(ANOVA)"
+        "选择检验类型",
+        "差异性检验",
+        "独立性检验"
       ]
     },
     {
+      "key": "difference_method",
+      "hint": "比较 2 组均值选择独立样本 t 检验；比较 3 组及以上均值选择单因素方差分析",
+      "kind": "enum",
+      "label": "检验方法",
+      "default": "选择检验方法",
+      "options": [
+        "选择检验方法",
+        "独立样本 t 检验",
+        "单因素方差分析（ANOVA）"
+      ],
+      "showWhen": {
+        "key": "test_type",
+        "values": [
+          "差异性检验"
+        ]
+      }
+    },
+    {
+      "key": "independence_method",
+      "hint": "推荐自动选择，由插件根据列联表条件判断",
+      "kind": "enum",
+      "label": "检验方法",
+      "default": "选择检验方法",
+      "options": [
+        "选择检验方法",
+        "自动选择",
+        "卡方独立性检验",
+        "Fisher 精确检验"
+      ],
+      "showWhen": {
+        "key": "test_type",
+        "values": [
+          "独立性检验"
+        ]
+      }
+    },
+    {
       "key": "group_column",
-      "hint": "选组别所在的列（独立t检验需恰好2组；ANOVA需2组及以上）",
+      "hint": "选择用于划分组别的类别列；t 检验需要恰好 2 组，ANOVA 需要至少 2 组",
       "kind": "column",
       "label": "分组列",
       "default": "",
       "showWhen": {
-        "key": "method",
+        "key": "test_type",
         "values": [
-          "独立样本t检验",
-          "单因素方差分析(ANOVA)"
+          "差异性检验"
         ]
       }
     },
     {
       "key": "value_column",
-      "hint": "被检验的数值列（配对t检验时作为前测列）",
+      "hint": "选择需要比较组间均值的数值指标列",
       "kind": "column",
       "label": "数值列",
-      "default": ""
-    },
-    {
-      "key": "paired_column",
-      "hint": "配对t检验的后测列",
-      "kind": "column",
-      "label": "配对列（后测）",
       "default": "",
       "showWhen": {
-        "key": "method",
+        "key": "test_type",
         "values": [
-          "配对t检验"
-        ]
-      }
-    },
-    {
-      "key": "mu",
-      "hint": "单样本t检验：检验样本均值是否等于该目标值",
-      "kind": "float",
-      "label": "目标值μ0",
-      "default": 0,
-      "showWhen": {
-        "key": "method",
-        "values": [
-          "单样本t检验"
+          "差异性检验"
         ]
       }
     },
     {
       "key": "tail",
-      "hint": "双尾：均值不等；右尾：均值更大；左尾：均值更小",
+      "hint": "双尾检验两组是否不同；右尾检验组 1 是否更大；左尾检验组 1 是否更小",
       "kind": "enum",
       "label": "检验方向",
       "default": "双尾",
@@ -84,47 +99,90 @@
         "左尾"
       ],
       "showWhen": {
-        "key": "method",
+        "key": "difference_method",
         "values": [
-          "独立样本t检验",
-          "配对t检验",
-          "单样本t检验"
+          "独立样本 t 检验"
+        ]
+      }
+    },
+    {
+      "key": "row_variable",
+      "hint": "选择列联表的行分类变量，例如性别、地区或处理组",
+      "kind": "column",
+      "label": "行变量",
+      "default": "",
+      "showWhen": {
+        "key": "test_type",
+        "values": [
+          "独立性检验"
+        ]
+      }
+    },
+    {
+      "key": "column_variable",
+      "hint": "选择列联表的列分类变量，例如结果类别、等级或是否发生",
+      "kind": "column",
+      "label": "列变量",
+      "default": "",
+      "showWhen": {
+        "key": "test_type",
+        "values": [
+          "独立性检验"
         ]
       }
     },
     {
       "key": "alpha",
-      "hint": "p 值小于该水平时拒绝原假设",
+      "hint": "判断显著性的阈值，通常使用 0.05；当 p < α 时拒绝 H0",
       "kind": "float",
       "label": "显著性水平",
-      "default": 0.05
+      "default": 0.05,
+      "showWhen": {
+        "key": "difference_method",
+        "values": [
+          "独立样本 t 检验",
+          "单因素方差分析（ANOVA）"
+        ]
+      }
+    },
+    {
+      "key": "alpha",
+      "hint": "判断显著性的阈值，通常使用 0.05；当 p < α 时拒绝 H0",
+      "kind": "float",
+      "label": "显著性水平",
+      "default": 0.05,
+      "showWhen": {
+        "key": "independence_method",
+        "values": [
+          "自动选择",
+          "卡方独立性检验",
+          "Fisher 精确检验"
+        ]
+      }
     }
   ],
-  "source": "community",
+  "source": "user-created",
   "outputs": [
     {
       "name": "report",
       "type": "JSON",
       "direction": "out"
-    },
-    {
-      "name": "report_csv",
-      "type": "CSV",
-      "direction": "out"
-    },
-    {
-      "name": "data",
-      "type": "CSV",
-      "direction": "out"
     }
   ],
-  "version": "1.1.2",
+  "version": "1.0.3",
   "category": "统计分析",
-  "description": "t检验与F检验一体化：独立样本t检验（自动先做方差齐性F检验并选择Student/Welch）、配对t检验、单样本t检验、单因素方差分析ANOVA。输出全平铺中文检验报告（描述统计、F/t统计量、p值、置信区间、效应量、结论），可直接渲染为论文级表格或导出Excel。",
+  "changelog": [
+    "1.0.3：为全部操作参数补充悬停提示，说明字段用途、分组要求、检验方向和显著性判断规则。",
+    "1.0.2：修复极小 p 值显示为 0.000e+00；统一改为 p < 0.001，并优化样本概况、前提检验、核心结果和效应量排版。",
+    "1.0.1：重构 report 层次；改用兼容字体的 H0/H1，显示具体数学假设，并压缩描述统计与检验结果。",
+    "1.0.0：按最终方案重构为差异性检验与独立性检验两类；移除单样本和配对 t 检验；增加自动卡方/Fisher 选择及论文级报告。"
+  ],
+  "description": "面向数学建模与科研分析的高频假设检验：独立样本 t 检验、单因素方差分析，以及带自动方法选择的分类变量独立性检验。输出含方法说明、统计量、统计结论和可直接用于论文的规范分析文字。",
   "masterLevel": 0,
   "masterEvidence": [
-    "独立样本t检验自动进行方差齐性F检验并切换Student/Welch",
-    "report全平铺结构，指标面板直接渲染论文级表格",
-    "自动剔除缺失与非数字脏数据，同列选择友好报错"
+    "V1.0 少而精：仅保留独立样本 t 检验、单因素 ANOVA、卡方独立性检验与 Fisher 精确检验",
+    "两级检验类型与方法选择，参数随所选方法动态显示",
+    "独立性检验按期望频数条件自动选择卡方或 2×2 Fisher 精确检验",
+    "输出包含论文级结果分析文字"
   ]
 }
