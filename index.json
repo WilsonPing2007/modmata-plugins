@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-04T16:46:51.063Z",
+  "updated": "2026-09-05T05:16:36.260Z",
   "count": 23,
   "plugins": [
     {
@@ -135,13 +135,13 @@
     },
     {
       "id": "hypothesis-tests",
-      "name": "假设检验（t检验·F检验）",
-      "icon": "📊",
+      "name": "统计假设检验",
+      "icon": "scale",
       "category": "统计分析",
-      "description": "t检验与F检验一体化：独立样本t检验（自动先做方差齐性F检验并选择Student/Welch）、配对t检验、单样本t检验、单因素方差分析ANOVA。输出全平铺中文检验报告（描述统计、F/t统计量、p值、置信区间、效应量、结论），可直接渲染为论文级表格或导出Excel。",
-      "version": "1.1.2",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "面向数学建模与科研分析的高频假设检验：独立样本 t 检验、单因素方差分析，以及带自动方法选择的分类变量独立性检验。输出含方法说明、统计量、统计结论和可直接用于论文的规范分析文字。",
+      "version": "1.0.3",
+      "author": "Lisa",
+      "updated": "2026-09-05"
     },
     {
       "id": "import-data",
