@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-06T07:03:19.786Z",
+  "updated": "2026-09-06T12:33:46.967Z",
   "count": 26,
   "plugins": [
     {
@@ -38,10 +38,10 @@
       "name": "特征分布图",
       "icon": "chart-no-axes-column",
       "category": "统计分析",
-      "description": "连接数据导入插件，选择一个特征；数值列生成 300 DPI 直方图、KDE、均值和中位数，类别列生成频数柱状图。",
-      "version": "3.0.2",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "选择数值特征与可选类别列，生成分离式或合并式直方图/核密度图；支持多选均值、中位数统计线。",
+      "version": "3.1.0",
+      "author": "Wilson.",
+      "updated": "2026-09-06"
     },
     {
       "id": "distribution-model-library",
