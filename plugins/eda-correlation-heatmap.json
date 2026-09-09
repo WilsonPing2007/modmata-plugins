@@ -1,78 +1,57 @@
 {
   "id": "eda-correlation-heatmap",
-  "name": "相关性热力图",
-  "icon": "🔥",
-  "category": "统计分析",
-  "description": "从数值字段计算 Pearson、Spearman 或 Kendall 相关系数，输出 300 DPI 热力图、高相关变量对报告并原样传递数据。",
-  "version": "1.0.2",
-  "masterLevel": 0,
-  "masterEvidence": [
-    "支持三种相关系数和字段选择",
-    "输出 300 DPI 热力图与高相关变量对"
-  ],
-  "params": [
-    {
-      "key": "columns",
-      "label": "数值字段",
-      "kind": "columns",
-      "default": [],
-      "hint": "留空时分析全部数值字段；最多 20 个"
-    },
-    {
-      "key": "method",
-      "label": "相关系数",
-      "kind": "enum",
-      "default": "Pearson",
-      "options": [
-        "Pearson",
-        "Spearman",
-        "Kendall"
-      ]
-    },
-    {
-      "key": "annotate",
-      "label": "显示系数",
-      "kind": "bool",
-      "default": true
-    },
-    {
-      "key": "upper_triangle",
-      "label": "仅显示下三角",
-      "kind": "bool",
-      "default": true
-    },
-    {
-      "key": "high_correlation_threshold",
-      "label": "高相关阈值",
-      "kind": "float",
-      "default": 0.8
-    }
-  ],
+  "code": "# 关联图：只把用户提供的数值矩阵绘制为载荷矩阵、相关性矩阵或交互网络图\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfrom matplotlib.cm import ScalarMappable\nfrom matplotlib.colors import LinearSegmentedColormap, Normalize\nfrom matplotlib.collections import LineCollection\nfrom matplotlib.lines import Line2D\nfrom matplotlib.patches import Circle, Ellipse, Rectangle\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 15,\n    'xtick.labelsize': 9,\n    'ytick.labelsize': 9,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nSIGNED_CMAP = LinearSegmentedColormap.from_list('signed_deep', ['#174A7E', '#F7F8FA', '#B62935'])\nUNSIGNED_CMAP = LinearSegmentedColormap.from_list('unsigned_blue', ['#F4F8FC', '#8FB9D9', '#164F8C'])\nCORRELATION_SIGNED_CMAP = LinearSegmentedColormap.from_list('correlation_signed_vivid', [\n    (0.00, '#0B4F8A'),\n    (0.46, '#8DB7D9'),\n    (0.50, '#F7F8FA'),\n    (0.54, '#E99A91'),\n    (1.00, '#C51F2D'),\n])\nCORRELATION_UNSIGNED_CMAP = LinearSegmentedColormap.from_list('correlation_unsigned_vivid', [\n    (0.00, '#EAF1F8'),\n    (0.10, '#BFD8ED'),\n    (1.00, '#0B4F8A'),\n])\nNODE_IMPORTANCE_CMAP = LinearSegmentedColormap.from_list(\n    'node_importance', ['#FFF4C2', '#F6C744', '#E67E22']\n)\nTEXT = '#28323C'\nGRID = '#B8C0C8'\nimage_types = {{image_types}}\nweight_range = {{weight_range}}\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\ndef _to_png(fig):\n    buffer = io.BytesIO()\n    fig.savefig(buffer, format='png', dpi=300, facecolor='white', bbox_inches=None)\n    plt.close(fig)\n    return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode('ascii')\n\n\ndef _colors():\n    if weight_range == '1~-1':\n        return SIGNED_CMAP, Normalize(vmin=-1, vmax=1), '权重（-1 到 1）'\n    return UNSIGNED_CMAP, Normalize(vmin=0, vmax=1), '权重（0 到 1）'\n\n\ndef _matrix_axes(ax, rows, columns):\n    n_rows, n_columns = len(rows), len(columns)\n    ax.set_xlim(-0.5, n_columns - 0.5)\n    ax.set_ylim(n_rows - 0.5, -0.5)\n    ax.set_aspect('equal')\n    ax.set_xticks(np.arange(n_columns))\n    ax.set_yticks(np.arange(n_rows))\n    ax.set_xticklabels(columns, rotation=38, ha='left', rotation_mode='anchor')\n    ax.xaxis.tick_top()\n    ax.tick_params(axis='x', pad=8, length=0)\n    ax.set_yticklabels(rows)\n    ax.tick_params(axis='y', length=0)\n    ax.set_xticks(np.arange(-0.5, n_columns, 1), minor=True)\n    ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)\n    ax.grid(which='minor', color=GRID, linewidth=0.75)\n    ax.tick_params(which='minor', bottom=False, left=False)\n    for spine in ax.spines.values():\n        spine.set_color('#68737E')\n        spine.set_linewidth(0.9)\n\n\ndef _add_colorbar(fig, ax, cmap, norm, label):\n    mapper = ScalarMappable(norm=norm, cmap=cmap)\n    mapper.set_array([])\n    colorbar = fig.colorbar(mapper, ax=ax, fraction=0.045, pad=0.055, shrink=0.82)\n    colorbar.set_label(label)\n    return colorbar\n\n\ndef _load_matrix(values, row_labels, column_labels, cmap, norm, colorbar_label):\n    n_rows, n_columns = values.shape\n    size = max(6.6, min(15.5, 2.4 + 0.52 * max(n_rows, n_columns)))\n    fig, ax = plt.subplots(figsize=(size + 1.0, max(5.6, size * n_rows / max(1, n_columns) * 0.88)), facecolor='white')\n    _matrix_axes(ax, row_labels, column_labels)\n    xs, ys, weights = [], [], []\n    for row in range(n_rows):\n        for column in range(n_columns):\n            value = float(values[row, column])\n            if not np.isfinite(value):\n                continue\n            xs.append(column)\n            ys.append(row)\n            weights.append(value)\n    weights = np.asarray(weights)\n    sizes = 50 + 680 * np.abs(weights)\n    ax.scatter(xs, ys, s=sizes, c=weights, cmap=cmap, norm=norm, marker='o', edgecolor='#FFFFFF', linewidth=0.75, zorder=2)\n    font_size = max(5.8, min(9.0, 12.0 - 0.24 * max(n_rows, n_columns)))\n    for x, y, value in zip(xs, ys, weights):\n        color = 'white' if abs(float(value)) >= 0.58 else TEXT\n        ax.text(x, y, f'{float(value):.2f}', ha='center', va='center', fontsize=font_size, fontweight='bold', color=color, zorder=3)\n    fig.suptitle('载荷矩阵', x=0.075, y=0.965, ha='left', fontweight='bold', color=TEXT)\n    _add_colorbar(fig, ax, cmap, norm, colorbar_label)\n    fig.text(0.075, 0.025, f'直接绘制输入矩阵：{n_rows} × {n_columns}；圆越大表示 |权重| 越大。', fontsize=8.5, color='#66707A')\n    fig.subplots_adjust(left=0.15, right=0.88, top=0.86, bottom=0.10)\n    return fig\n\n\ndef _correlation_matrix(values, labels, cmap, norm, colorbar_label):\n    count = len(labels)\n    display_cmap = CORRELATION_SIGNED_CMAP if weight_range == '1~-1' else CORRELATION_UNSIGNED_CMAP\n    size = max(7.0, min(15.5, 2.7 + count * 0.62))\n    fig, ax = plt.subplots(figsize=(size + 1.1, size), facecolor='white')\n    _matrix_axes(ax, labels, labels)\n    font_size = max(6.0, min(10.0, 12.0 - 0.27 * count))\n    diagonal_indexes = [index for index in range(count) if np.isfinite(values[index, index])]\n    if diagonal_indexes:\n        diagonal_values = np.asarray([float(values[index, index]) for index in diagonal_indexes])\n        diagonal_sizes = 90 + 980 * np.abs(diagonal_values)\n        ax.scatter(\n            diagonal_indexes, diagonal_indexes, s=diagonal_sizes,\n            c=diagonal_values, cmap=display_cmap, norm=norm,\n            marker='o', edgecolor='#FFFFFF', linewidth=0.75, zorder=2,\n        )\n        for index, value in zip(diagonal_indexes, diagonal_values):\n            number_color = 'white' if abs(float(value)) >= 0.58 else TEXT\n            ax.text(index, index, f'{float(value):.2f}', ha='center', va='center', fontsize=font_size, fontweight='bold', color=number_color, zorder=3)\n    for row in range(count):\n        for column in range(count):\n            if row == column:\n                continue\n            value = float(values[row, column])\n            color = display_cmap(norm(value))\n            if row < column:\n                ax.add_patch(Rectangle(\n                    (column - 0.5, row - 0.5), 1.0, 1.0,\n                    facecolor=color, edgecolor='#FFFFFF', linewidth=1.0, zorder=1,\n                ))\n                number_color = 'white' if abs(value) >= 0.50 else TEXT\n                ax.text(column, row, f'{value:.2f}', ha='center', va='center', fontsize=font_size, fontweight='bold', color=number_color, zorder=3)\n            else:\n                strength = abs(value)\n                minor_axis = max(0.08, 0.78 * (1.0 - strength) ** 0.72)\n                angle = 45 if value >= 0 else -45\n                ellipse = Ellipse((column, row), width=0.78, height=minor_axis, angle=angle, facecolor=color, edgecolor='#6F7881', linewidth=0.75, alpha=0.96, zorder=2)\n                ax.add_patch(ellipse)\n    fig.suptitle('相关性矩阵', x=0.075, y=0.965, ha='left', fontweight='bold', color=TEXT)\n    _add_colorbar(fig, ax, display_cmap, norm, colorbar_label)\n    fig.text(0.075, 0.025, '上三角以填色方格显示数值；下三角显示椭圆；CSV 对角线有数字时绘制载荷圆，空白时留空。', fontsize=8.5, color='#66707A')\n    fig.subplots_adjust(left=0.15, right=0.88, top=0.86, bottom=0.10)\n    return fig\n\n\ndef _interaction_network(values, labels, cmap, norm, colorbar_label):\n    count = len(labels)\n    fig_size = max(7.4, min(12.5, 5.8 + count * 0.32))\n    fig, ax = plt.subplots(figsize=(fig_size + 1.4, fig_size), facecolor='white')\n    angles = np.pi / 2 - np.arange(count) * 2 * np.pi / count\n    positions = np.column_stack([np.cos(angles), np.sin(angles)])\n    ax.add_patch(Circle((0, 0), radius=1.0, fill=False, edgecolor='#E7C77B', linewidth=2.0, alpha=0.92, zorder=0))\n    segments, widths, colors = [], [], []\n    importance = np.zeros(count, dtype=float)\n    for left in range(count):\n        for right in range(left + 1, count):\n            value = float(values[left, right])\n            strength = abs(value)\n            importance[left] += strength\n            importance[right] += strength\n            if strength <= 1e-12:\n                continue\n            segments.append([positions[left], positions[right]])\n            widths.append(0.35 + 2.35 * strength)\n            rgba = list(cmap(norm(value)))\n            rgba[3] = 0.12 + 0.78 * strength\n            colors.append(rgba)\n    if segments:\n        ax.add_collection(LineCollection(segments, colors=colors, linewidths=widths, zorder=1, capstyle='round'))\n    node_sizes = np.full(count, max(430.0, 760.0 - count * 15.0))\n    minimum_importance, maximum_importance = float(importance.min()), float(importance.max())\n    if np.isclose(minimum_importance, maximum_importance):\n        importance_norm = Normalize(vmin=minimum_importance - 0.5, vmax=maximum_importance + 0.5)\n    else:\n        importance_norm = Normalize(vmin=minimum_importance, vmax=maximum_importance)\n    ax.scatter(positions[:, 0], positions[:, 1], s=node_sizes, c=importance, cmap=NODE_IMPORTANCE_CMAP, norm=importance_norm, edgecolor='#FFFFFF', linewidth=1.8, zorder=3)\n    ax.scatter(positions[:, 0], positions[:, 1], s=node_sizes, facecolors='none', edgecolor='#44515C', linewidth=0.85, zorder=4)\n    for index, (x, y) in enumerate(positions):\n        radius = 1.18\n        label_x, label_y = x * radius, y * radius\n        horizontal = 'left' if x > 0.15 else ('right' if x < -0.15 else 'center')\n        vertical = 'bottom' if y > 0.15 else ('top' if y < -0.15 else 'center')\n        ax.text(label_x, label_y, str(labels[index]), ha=horizontal, va=vertical, fontsize=9.2, color=TEXT, fontweight='bold')\n    ax.set_xlim(-1.46, 1.46)\n    ax.set_ylim(-1.36, 1.36)\n    ax.set_aspect('equal')\n    ax.axis('off')\n    fig.suptitle('交互网络图', x=0.075, y=0.965, ha='left', fontweight='bold', color=TEXT)\n    _add_colorbar(fig, ax, cmap, norm, colorbar_label)\n    legend = [\n        Line2D([0], [0], color='#6D7882', linewidth=0.35 + 2.35 * strength, alpha=0.12 + 0.78 * strength, label=f'|权重| = {strength:.2g}')\n        for strength in (0.25, 0.60, 1.00)\n    ]\n    edge_legend = ax.legend(handles=legend, frameon=False, loc='lower center', bbox_to_anchor=(0.5, -0.06), ncol=3, title='边：线宽与深浅')\n    ax.add_artist(edge_legend)\n    node_legend = [\n        Line2D([0], [0], marker='o', linestyle='none', markerfacecolor=NODE_IMPORTANCE_CMAP(level), markeredgecolor='#6F5C2E', markersize=8, label=label)\n        for level, label in ((0.0, '低'), (0.5, '中'), (1.0, '高'))\n    ]\n    ax.legend(handles=node_legend, frameon=False, loc='lower center', bbox_to_anchor=(0.5, -0.17), ncol=3, title='节点：关联重要性')\n    fig.text(0.075, 0.025, '节点位于圆环上；节点越偏橙表示所连边的 |权重| 之和越大；边仅读取矩阵上三角。', fontsize=8.5, color='#66707A')\n    fig.subplots_adjust(left=0.08, right=0.86, top=0.90, bottom=0.20)\n    return fig\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nif not isinstance(image_types, (list, tuple)) or not image_types:\n    raise RuntimeError('请至少选择一种图片类型')\nallowed_types = ('载荷矩阵', '相关性矩阵', '交互网络图')\nif any(item not in allowed_types for item in image_types):\n    raise RuntimeError('图片类型只能多选：载荷矩阵、相关性矩阵、交互网络图')\nif weight_range not in ('1~-1', '1-0'):\n    raise RuntimeError('权重范围只能选择“1~-1”或“1-0”')\n\nframe = _to_frame(data)\nif frame.empty or frame.shape[1] == 0:\n    raise RuntimeError('输入 CSV 是空矩阵')\nnumeric = frame.apply(pd.to_numeric, errors='coerce')\nblank_mask = frame.isna().copy()\nfor column in frame.columns:\n    blank_mask[column] = blank_mask[column] | frame[column].astype('string').str.strip().eq('').fillna(False)\ninvalid_mask = numeric.isna() & ~blank_mask\nif invalid_mask.any().any():\n    bad_count = int(invalid_mask.sum().sum())\n    raise RuntimeError(f'输入矩阵发现 {bad_count} 个非数字内容；仅方阵对角线允许留空')\nmissing_positions = np.argwhere(numeric.isna().to_numpy())\nif len(missing_positions) and (\n    numeric.shape[0] != numeric.shape[1]\n    or any(int(row) != int(column) for row, column in missing_positions)\n):\n    raise RuntimeError('输入矩阵只有方阵对角线可以留空；其他格子必须都有数字')\nvalues = numeric.to_numpy(dtype=float)\nif np.isinf(values).any():\n    raise RuntimeError('输入矩阵不能包含无穷大或无效数字')\nfinite_values = values[np.isfinite(values)]\nif finite_values.size == 0:\n    raise RuntimeError('输入矩阵没有可绘制的数字')\nminimum, maximum = float(finite_values.min()), float(finite_values.max())\nif weight_range == '1~-1' and (minimum < -1 or maximum > 1):\n    raise RuntimeError(f'权重范围选择 1~-1 时，所有数字必须位于 [-1, 1]；当前范围为 [{minimum:.3g}, {maximum:.3g}]')\nif weight_range == '1-0' and (minimum < 0 or maximum > 1):\n    raise RuntimeError(f'权重范围选择 1-0 时，所有数字必须位于 [0, 1]；当前范围为 [{minimum:.3g}, {maximum:.3g}]')\nif values.shape[0] > 30 or values.shape[1] > 30:\n    raise RuntimeError('为保证图片可读性，输入矩阵最多支持 30 行 × 30 列')\n\ncolumn_labels = [str(column) for column in frame.columns]\nrow_labels = column_labels if values.shape[0] == values.shape[1] else [f'行{index + 1}' for index in range(values.shape[0])]\nrequires_square = any(item in ('相关性矩阵', '交互网络图') for item in image_types)\nif requires_square and values.shape[0] != values.shape[1]:\n    raise RuntimeError('相关性矩阵和交互网络图要求输入为 n × n 方阵；载荷矩阵可以使用 n × m 矩阵')\nif '交互网络图' in image_types and values.shape[0] > 20:\n    raise RuntimeError('为保证交互网络图标签可读性，网络图最多支持 20 个节点')\n\ncmap, norm, colorbar_label = _colors()\nimages = []\nfor image_type in image_types:\n    if image_type == '载荷矩阵':\n        figure = _load_matrix(values, row_labels, column_labels, cmap, norm, colorbar_label)\n    elif image_type == '相关性矩阵':\n        figure = _correlation_matrix(values, column_labels, cmap, norm, colorbar_label)\n    else:\n        figure = _interaction_network(values, column_labels, cmap, norm, colorbar_label)\n    images.append(_to_png(figure))\n\nreturn {'image': images[0] if len(images) == 1 else images}\n",
+  "icon": "workflow",
+  "name": "关联图",
   "inputs": [
     {
       "name": "data",
       "type": "CSV",
-      "direction": "in",
-      "required": true
+      "required": true,
+      "direction": "in"
     }
   ],
+  "params": [
+    {
+      "key": "image_types",
+      "hint": "多选时，唯一的 image 节点会按选择顺序输出多张图片。",
+      "kind": "multi-enum",
+      "label": "图片类型（多选）",
+      "default": [
+        "载荷矩阵"
+      ],
+      "options": [
+        "载荷矩阵",
+        "相关性矩阵",
+        "交互网络图"
+      ]
+    },
+    {
+      "key": "weight_range",
+      "hint": "1~-1 使用红—蓝发散色；1-0 使用由浅到深的蓝色。",
+      "kind": "enum",
+      "label": "权重范围",
+      "default": "1~-1",
+      "options": [
+        "1~-1",
+        "1-0"
+      ]
+    }
+  ],
+  "source": "builtin-eda",
   "outputs": [
     {
       "name": "image",
       "type": "Image",
       "direction": "out"
-    },
-    {
-      "name": "report",
-      "type": "JSON",
-      "direction": "out"
-    },
-    {
-      "name": "data",
-      "type": "CSV",
-      "direction": "out"
     }
   ],
-  "code": "# E2 相关性热力图：Pearson/Spearman/Kendall + 高相关变量报告\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\nimport matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nimport seaborn as sns\n\nplt.rcParams.update({\n    'font.family': 'sans-serif',\n    'font.sans-serif': ['Microsoft YaHei', 'SimHei', 'Arial', 'DejaVu Sans'],\n    'axes.unicode_minus': False,\n    'font.size': 10,\n    'axes.titlesize': 15,\n    'xtick.labelsize': 9,\n    'ytick.labelsize': 9,\n    'figure.facecolor': 'white',\n    'axes.facecolor': 'white',\n    'savefig.facecolor': 'white',\n    'savefig.dpi': 300,\n})\n\nmethod_label = {{method}}\nannotate = bool({{annotate}})\nupper_triangle = bool({{upper_triangle}})\nselected_columns = {{columns}}\nhigh_threshold = float({{high_correlation_threshold}})\n\n\ndef _to_frame(value):\n    if isinstance(value, pd.DataFrame):\n        return value.copy()\n    if isinstance(value, bytes):\n        for encoding in ('utf-8-sig', 'utf-8', 'gbk', 'gb18030'):\n            try:\n                return pd.read_csv(io.StringIO(value.decode(encoding)))\n            except UnicodeDecodeError:\n                continue\n        raise RuntimeError('CSV 编码无法识别')\n    if isinstance(value, str):\n        return pd.read_csv(io.StringIO(value.lstrip('\\ufeff')))\n    raise RuntimeError('输入 data 必须是 CSV 文本或 DataFrame')\n\n\nif data is None:\n    raise RuntimeError('请先连接并运行上游的数据导入插件')\nmethod_map = {'pearson': 'pearson', 'spearman': 'spearman', 'kendall': 'kendall'}\nmethod = method_map.get(str(method_label).strip().lower())\nif method is None:\n    raise RuntimeError('相关系数方法必须是 Pearson、Spearman 或 Kendall')\nif not 0 <= high_threshold <= 1:\n    raise RuntimeError('高相关阈值必须在 0 到 1 之间')\n\ndf = _to_frame(data)\nnumeric = df.select_dtypes(include=np.number)\nif selected_columns:\n    missing = [str(c) for c in selected_columns if str(c) not in df.columns]\n    if missing:\n        raise RuntimeError('找不到字段：' + '、'.join(missing))\n    non_numeric = [str(c) for c in selected_columns if str(c) not in numeric.columns]\n    if non_numeric:\n        raise RuntimeError('相关性分析只能选择数值字段：' + '、'.join(non_numeric))\n    numeric = numeric[[str(c) for c in selected_columns]]\nif numeric.shape[1] < 2:\n    raise RuntimeError('相关性热力图至少需要 2 个数值字段')\nif numeric.shape[1] > 20:\n    raise RuntimeError('为保证图表可读性，一次最多选择 20 个数值字段')\n\ncorr = numeric.corr(method=method)\nhigh_pairs = []\nfor i in range(len(corr.columns)):\n    for j in range(i + 1, len(corr.columns)):\n        value = corr.iloc[i, j]\n        if pd.notna(value) and abs(float(value)) >= high_threshold:\n            high_pairs.append({\n                'column_1': str(corr.columns[i]),\n                'column_2': str(corr.columns[j]),\n                'correlation': float(value),\n            })\nhigh_pairs.sort(key=lambda item: abs(item['correlation']), reverse=True)\n\ncount = len(corr.columns)\nlongest_label = max([len(str(column)) for column in corr.columns] + [0])\nstress_layout = count > 10 or longest_label > 14\nsize = max(6.4, min(16.0, 1.0 + count * 0.70 + max(0, longest_label - 12) * 0.08))\nfig, ax = plt.subplots(figsize=(size, size * (0.90 if stress_layout else 0.82)), facecolor='white')\nmask = np.triu(np.ones_like(corr, dtype=bool), k=1) if upper_triangle else None\nsns.heatmap(\n    corr,\n    mask=mask,\n    cmap=sns.diverging_palette(240, 12, s=85, l=42, as_cmap=True),\n    vmin=-1,\n    vmax=1,\n    center=0,\n    annot=annotate,\n    fmt='.2f',\n    annot_kws={'size': 8.5},\n    square=True,\n    linewidths=0.7,\n    linecolor='white',\n    cbar_kws={'label': '相关系数', 'shrink': 0.82},\n    ax=ax,\n)\nax.set_title(f'{method_label} 相关性热力图', loc='left', fontweight='bold', pad=16)\nax.set_xlabel('')\nax.set_ylabel('')\nax.tick_params(axis='x', rotation=90 if stress_layout else 38, labelsize=7.5 if stress_layout else 9)\nax.tick_params(axis='y', rotation=0, labelsize=7.5 if stress_layout else 9)\nfig.text(0.06 if stress_layout else 0.08, 0.02, f'注：共 {count} 个数值字段；|r| ≥ {high_threshold:.2f} 的变量对共 {len(high_pairs)} 组。', fontsize=8.5, color='#666666')\nleft_margin = min(0.30, 0.16 + max(0, longest_label - 10) * 0.006) if stress_layout else 0.16\nfig.subplots_adjust(left=left_margin, right=0.92, top=0.91, bottom=0.30 if stress_layout else 0.17)\n_buffer = io.BytesIO()\nfig.savefig(_buffer, format='png', dpi=300, facecolor='white', bbox_inches='tight')\nplt.close(fig)\nimage = 'data:image/png;base64,' + base64.b64encode(_buffer.getvalue()).decode('ascii')\nreport = {\n    'method': method,\n    'columns': [str(c) for c in corr.columns],\n    'matrix': {str(row): {str(col): (None if pd.isna(corr.loc[row, col]) else float(corr.loc[row, col])) for col in corr.columns} for row in corr.index},\n    'high_correlation_threshold': high_threshold,\n    'high_correlation_pairs': high_pairs,\n}\nreturn {'image': image, 'report': report, 'data': data}\n",
-  "source": "builtin-eda"
+  "version": "2.0.4",
+  "category": "统计分析",
+  "description": "直接绘制数值 CSV 矩阵；相关性矩阵上三角为热力格，对角线有值时显示载荷圆、留空时不补值，并支持圆环网络。",
+  "masterLevel": 0,
+  "masterEvidence": [
+    "直接绘制输入矩阵，不执行相关性计算或补值",
+    "对角线数字使用加大载荷圆、空白保持为空；上三角热力格、下三角椭圆与圆环网络"
+  ]
 }
