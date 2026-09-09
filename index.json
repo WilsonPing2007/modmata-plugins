@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-09T11:45:22.780Z",
+  "updated": "2026-09-09T11:45:32.333Z",
   "count": 26,
   "plugins": [
     {
@@ -185,13 +185,13 @@
     },
     {
       "id": "metrics-viewer",
-      "name": "指标面板",
-      "icon": "chart-no-axes-column",
+      "name": "报告面板",
+      "icon": "clipboard",
       "category": "统计分析",
-      "description": "把 JSON 指标、模型或报告渲染成 300 DPI 论文级表格图，完整保留字段并将原始 JSON 传给下游。",
-      "version": "2.0.2",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "把 JSON 指标、模型或报告渲染成 300 DPI 论文级表格图；时间序列基础检验自动压缩为五项摘要，其他嵌套报告逐项展开，并将原始 JSON 传给下游。",
+      "version": "2.2.0",
+      "author": "Wilson.",
+      "updated": "2026-09-09"
     },
     {
       "id": "missing-value-handler",
