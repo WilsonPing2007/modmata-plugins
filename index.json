@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-09-06T12:33:46.967Z",
+  "updated": "2026-09-09T11:45:22.780Z",
   "count": 26,
   "plugins": [
     {
@@ -75,13 +75,13 @@
     },
     {
       "id": "eda-correlation-heatmap",
-      "name": "相关性热力图",
-      "icon": "🔥",
+      "name": "关联图",
+      "icon": "workflow",
       "category": "统计分析",
-      "description": "从数值字段计算 Pearson、Spearman 或 Kendall 相关系数，输出 300 DPI 热力图、高相关变量对报告并原样传递数据。",
-      "version": "1.0.2",
-      "author": "Modmata",
-      "updated": "2026-09-03"
+      "description": "直接绘制数值 CSV 矩阵；相关性矩阵上三角为热力格，对角线有值时显示载荷圆、留空时不补值，并支持圆环网络。",
+      "version": "2.0.4",
+      "author": "Wilson.",
+      "updated": "2026-09-09"
     },
     {
       "id": "eda-data-quality-overview",
