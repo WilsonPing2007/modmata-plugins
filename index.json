@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "updated": "2026-09-09T11:45:32.333Z",
-  "count": 26,
+  "updated": "2026-09-09T11:45:39.636Z",
+  "count": 27,
   "plugins": [
     {
       "id": "ai-visualization",
@@ -252,6 +252,16 @@
       "version": "1.0.1",
       "author": "Modmata",
       "updated": "2026-09-03"
+    },
+    {
+      "id": "time-series-basic-check",
+      "name": "时间序列基础检验",
+      "icon": "chart-line",
+      "category": "统计分析",
+      "description": "自动识别 CSV 时间列，针对单个数值列检验时间顺序、等间隔、数值与时间索引缺失、重复时间点及样本量，仅输出结构化报告。",
+      "version": "1.0.0",
+      "author": "Wilson.",
+      "updated": "2026-09-09"
     },
     {
       "id": "time-series-chart",
